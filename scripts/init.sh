@@ -35,13 +35,14 @@ charmcraft create-lib "$LIB_NAME"
 # create the source file for the lib
 touch  "./$LIB_NAME.py"
 
+CHARM_PATH=${CHARM_NAME/-/_}
 # extract LIBID
-LIBID_RAW=$(cat "./lib/charms/$CHARM_NAME/$LIB_VERSION/$LIB_NAME.py" | grep LIBID)
+LIBID_RAW=$(cat "./lib/charms/$CHARM_PATH/$LIB_VERSION/$LIB_NAME.py" | grep LIBID)
 LIBID=${LIBID_RAW#*LIBID = }
 
 fill_in "\$LIBID" "$LIBID" "lib_template.jinja"
 
 # get rid of the lib file
-rm "./lib/charms/$CHARM_NAME/$LIB_VERSION/$LIB_NAME.py"
+rm "./lib/charms/$CHARM_PATH/$LIB_VERSION/$LIB_NAME.py"
 
-echo "lib ready at lib/charms/$CHARM_NAME/$LIB_VERSION/$LIB_NAME! Happy coding."
+echo "lib ready at lib/charms/$CHARM_PATH/$LIB_VERSION/$LIB_NAME! Happy coding."

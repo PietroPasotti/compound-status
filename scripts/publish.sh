@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
-LIB_V=${LIB_VERSION:-$LIB_VERSION}
-charmcraft publish-lib "charms.$LIB_NAME.$LIB_V.$LIB_NAME"  # $ TEMPLATE: Filled in by ./scripts/init.sh
+LIB_V=${LIB_VERSION:-v0}
+charmcraft publish-lib "charms.compound_status.$LIB_V.compound_status"  # $ TEMPLATE: Filled in by ./scripts/init.sh

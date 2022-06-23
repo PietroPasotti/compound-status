@@ -5,14 +5,17 @@ from pathlib import Path
 
 import jinja2 as jinja2
 
+import sys
+sys.path.append(str(Path()))
+
 import __version__
 
 root = Path()
 
 
 def inline_lib():
-    print("Rendering $LIB_NAME lib...")
-    py = root / "$LIB_NAME.py"
+    print("Rendering compound_status lib...")
+    py = root / "compound_status.py"
     template = root / "lib_template.jinja"
 
     assert py.exists()
@@ -22,9 +25,9 @@ def inline_lib():
         root
         / "lib"
         / "charms"
-        / "$LIB_NAME"  # $ TEMPLATE: Filled in by ./scripts/init.sh
+        / "compound_status"  # $ TEMPLATE: Filled in by ./scripts/init.sh
         / f"v{__version__.version}"
-        / "$LIB_NAME.py"  # $ TEMPLATE: Filled in by ./scripts/init.sh
+        / "compound_status.py"  # $ TEMPLATE: Filled in by ./scripts/init.sh
     )
 
     if not lib_file.parent.exists():
