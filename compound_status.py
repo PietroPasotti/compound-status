@@ -1,22 +1,32 @@
 import inspect
+import json
 import typing
 from contextlib import contextmanager
+from itertools import chain
 from logging import getLogger
+from operator import itemgetter
 from typing import Tuple, Optional, Sequence, Literal, Dict
 
 from ops.charm import CharmBase
-from ops.model import BlockedStatus, WaitingStatus, \
-    MaintenanceStatus, ActiveStatus, StatusBase
+from ops.framework import StoredState, Object
+from ops.model import (
+    BlockedStatus,
+    WaitingStatus,
+    MaintenanceStatus,
+    ActiveStatus,
+    StatusBase,
+)
+from typing_extensions import Self
 
-log = getLogger('compound-status')
+log = getLogger("compound-status")
 
-StatusName = Literal['blocked', 'waiting', 'maintenance', 'unknown', 'active']
-STATUS_PRIORITIES = ('blocked', 'waiting', 'maintenance', 'active', 'unknown')
+StatusName = Literal["blocked", "waiting", "maintenance", "unknown", "active"]
+STATUS_PRIORITIES = ("blocked", "waiting", "maintenance", "active", "unknown")
 STATUS_NAME_TO_CLASS = {
-    'blocked': BlockedStatus,
-    'waiting': WaitingStatus,
-    'maintenance': MaintenanceStatus,
-    'active': ActiveStatus
+    "blocked": BlockedStatus,
+    "waiting": WaitingStatus,
+    "maintenance": MaintenanceStatus,
+    "active": ActiveStatus
     # omit unknown as it should not be used directly.
 }
 
@@ -25,8 +35,7 @@ class Status:
     _ID = 0
 
     def __repr__(self):
-        return "<Status {} ({}): {}>".format(self._status, self.tag,
-                                             self._message)
+        return "<Status {} ({}): {}>".format(self._status, self.tag, self._message)
 
     def __init__(self, tag: Optional[str] = None):
         # to keep track of instantiation order
@@ -35,7 +44,7 @@ class Status:
 
         # if tag is None, we'll guess it from the attr name
         self.tag = tag
-        self._status = 'unknown'
+        self._status = "unknown"
         self._message = ""
         self._master = None  # type: Optional[MasterStatus]  # externally managed
 
@@ -62,7 +71,7 @@ class Status:
         self._logger.debug(msg, *args, **kwargs)
 
     def set(self, status: StatusName, msg: str = ""):
-        assert status in STATUS_NAME_TO_CLASS, 'invalid status: {}'.format(status)
+        assert status in STATUS_NAME_TO_CLASS, "invalid status: {}".format(status)
         assert isinstance(msg, str), type(msg)
 
         self._status = status
@@ -83,11 +92,21 @@ class Status:
     def message(self) -> str:
         return self._message
 
+    def snapshot(self) -> dict:
+        # tag should not change, and is reloaded on each init.
+        dct = {"type": "subordinate", "status": self._status, "message": self._message}
+        return dct
+
+    def restore(self, dct) -> Self:
+        assert dct["type"] == "subordinate", dct["type"]
+        self._status = dct["status"]
+        self._message = dct["message"]
+
 
 class MasterStatus(Status):
     SKIP_UNKNOWN = False
 
-    def __init__(self, tag: Optional[str] = 'master'):
+    def __init__(self, tag: Optional[str] = "master"):
         super().__init__(tag)
         self.children = ()  # type: Tuple[Status, ...]  # gets populated by CompoundStatus
         self._owner = None  # type: CharmBase  # externally managed
@@ -129,23 +148,22 @@ class MasterStatus(Status):
         return self._clobber_statuses(self.children, self.SKIP_UNKNOWN)
 
     @staticmethod
-    def _clobber_statuses(statuses: Sequence[Status],
-                          skip_unknown=False) -> str:
+    def _clobber_statuses(statuses: Sequence[Status], skip_unknown=False) -> str:
         """Produce a message summarizing the child statuses."""
         msgs = []
         for status in statuses:
-            if skip_unknown and status.status == 'unknown':
+            if skip_unknown and status.status == "unknown":
                 continue
-            msgs.append("[{}] ({}) {}".format(status.tag, status.status,
-                                              status.message))
-        return '; '.join(msgs)
+            msgs.append(
+                "[{}] ({}) {}".format(status.tag, status.status, status.message)
+            )
+        return "; ".join(msgs)
 
     @staticmethod
     def _get_worst_case(statuses: Sequence[str]):
         worst_so_far = statuses[0]
         for status in statuses[1:]:
-            if STATUS_PRIORITIES.index(status) < STATUS_PRIORITIES.index(
-                    worst_so_far):
+            if STATUS_PRIORITIES.index(status) < STATUS_PRIORITIES.index(worst_so_far):
                 worst_so_far = status
         return worst_so_far
 
@@ -157,8 +175,8 @@ class MasterStatus(Status):
         return self._get_worst_case(statuses)
 
     def coalesce(self) -> StatusBase:
-        if self.status == 'unknown':
-            raise ValueError('cannot coalesce unknown status')
+        if self.status == "unknown":
+            raise ValueError("cannot coalesce unknown status")
         status_type = STATUS_NAME_TO_CLASS[self.status]
         status_msg = self.message
         return status_type(status_msg)
@@ -173,21 +191,45 @@ class MasterStatus(Status):
             self._missed_update = True
             return
 
-        if self.status != 'unknown':
+        if self.status != "unknown":
             self._owner.unit.status = self.coalesce()
 
+    def snapshot(self) -> dict:
+        dct = super().snapshot()
+        dct["type"] = "master"
+        dct["user-set"] = self._user_set
+        return dct
 
-class CompoundStatus:
-    SKIP_UNKNOWN = False  # whether unknown statuses should be omitted from the master message
+    def restore(self, dct) -> Self:
+        assert dct["type"] == "master", dct["type"]
+        self._status = dct["status"]
+        self._message = dct["message"]
+        self._user_set = dct["user-set"]
+
+
+class CompoundStatus(Object):
+    SKIP_UNKNOWN = (
+        False  # whether unknown statuses should be omitted from the master message
+    )
     master = MasterStatus()
+    _state = StoredState()
 
     if typing.TYPE_CHECKING:
         _statuses = {}  # type: Dict[str, Status]
 
-    def __init__(self, charm: CharmBase):
-        is_status = lambda obj: \
-            isinstance(obj, Status) and not \
-            isinstance(obj, MasterStatus)
+    def __init__(self, charm: CharmBase, key: str = "compound_status"):
+        super().__init__(charm, key)
+        self._init_statuses(charm)
+        self._load_from_stored_state()
+
+    def _init_statuses(self, charm: CharmBase):
+        """Extract the statuses from the class namespace.
+
+        And associate them with the master status.
+        """
+        is_status = lambda obj: isinstance(obj, Status) and not isinstance(
+            obj, MasterStatus
+        )
         statuses_ = inspect.getmembers(self, is_status)
         statuses = sorted(statuses_, key=lambda s: s[1]._id)
 
@@ -200,21 +242,38 @@ class CompoundStatus:
         master.SKIP_UNKNOWN = self.SKIP_UNKNOWN
         master.children = tuple(a[1] for a in statuses)
         master._owner = charm
-        self.__dict__['_statuses'] = dict(statuses)
+        self.__dict__["_statuses"] = dict(statuses)
+
+        all_statuses = chain(map(itemgetter(1), statuses), (master,))
+        self._state.set_default(
+            **{status.tag: json.dumps(status.snapshot()) for status in all_statuses}
+        )
+
+    def _load_from_stored_state(self):
+        """Retrieve stored state snapshot of current statuses."""
+        for status in self._statuses.values():
+            stored = getattr(self._state, status.tag)
+
+            try:
+                dct = json.loads(stored)
+            except json.JSONDecodeError as e:
+                raise ValueError("not a valid status: {}".format(stored)) from e
+
+            status.restore(dct)
 
     # CompoundStatus is a proxy of the master status to some extent
     def set(self, status: StatusName, message: str):
         return self.master.set(status, message)
 
     def __setattr__(self, key: str, value: StatusBase):
-        if not isinstance(value, StatusBase):
-            raise TypeError(type(value))
-
-        if key == 'master':
-            return self.master.set(value.name, value.message)
-        if key in self._statuses:
-            return self._statuses[key].set(value.name, value.message)
-        raise AttributeError(key)
+        if isinstance(value, StatusBase):
+            if key == "master":
+                return self.master.set(value.name, value.message)
+            elif key in self._statuses:
+                return self._statuses[key].set(value.name, value.message)
+            else:
+                raise AttributeError(key)
+        return super().__setattr__(key, value)
 
     @property
     def hold(self):

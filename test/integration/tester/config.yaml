@@ -1,0 +1,7 @@
+options:
+  status:
+    type: string
+    default: 'blocked'
+  message:
+    type: string
+    default: ''

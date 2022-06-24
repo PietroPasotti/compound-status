@@ -27,20 +27,27 @@ class CharmStatus(CompoundStatus):
 
     workload = Status()
     relation_1 = Status()
-    relation_2 = Status(tag='rel2')
+    relation_2 = Status(tag="rel2")
 
 
 class TesterCharm(CharmBase):
     def __init__(self, framework, key=None):
         super().__init__(framework, key)
-        status = CharmStatus(self)
+        self.status = status = CharmStatus(self)
 
         with status.hold():
-            status.relation_1 = ActiveStatus('✅')
-            status.relation_2 = WaitingStatus('𝌗: foo')
-            status.workload.warning('some debug message about why the workload is blocked')
-            status.workload.info('some info about the workload')
-            status.workload.set('blocked', '💔')
+            status.relation_1 = ActiveStatus("✅")
+            status.relation_2 = WaitingStatus("𝌗: foo")
+            status.workload.warning(
+                "some debug message about why the workload is blocked"
+            )
+            status.workload.info("some info about the workload")
+            status.workload.set("blocked", "💔")
+
+        self.framework.observe(self.on.config_changed, self._on_config_change)
+
+    def _on_config_change(self, _):
+        self.status.relation_2.set(self.config["status"], self.config["message"])
 
 
 if __name__ == "__main__":
