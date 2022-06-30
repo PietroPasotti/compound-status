@@ -1,7 +1,7 @@
 # What this is
 
 ```python
-class CharmStatus(CompoundStatus):
+class StatusPool(CompoundStatus):
     SKIP_UNKNOWN = True
 
     workload = Status()
@@ -12,15 +12,21 @@ class CharmStatus(CompoundStatus):
 class TesterCharm(CharmBase):
     def __init__(self, framework, key=None):
         super().__init__(framework, key)
-        status = CharmStatus(self)
+        status_pool = StatusPool(self)
 
-        with status.hold():
-            status.relation_1 = ActiveStatus('✅')
-            status.relation_2 = WaitingStatus('𝌗: foo')
-            status.workload.warning('some debug message about why the workload is blocked')
-            status.workload.info('some info about the workload')
-            status.workload.set('blocked', '💔')
-```
+        # pro tip: keep the messages short
+        status_pool.relation_1 = ActiveStatus('✅')
+        status_pool.commit()  # sync with juju
+        
+        status_pool.relation_1.unset()  # send status_1 back to unknown, until you set it again. 
+        
+        status_pool.relation_2 = WaitingStatus('𝌗: foo')
+        status_pool.workload.warning('some debug message about why the workload is blocked')
+        status_pool.workload.info('some info about the workload')
+        status_pool.workload.error('whoopsiedaisies')
+        status_pool.workload = BlockedStatus('blocked', 'see debug-log for the reason')
+        status_pool.commit()   
+``` 
 
 You get:
 `tst/0*  blocked   idle   <IP>   [workload] (blocked) 💔; [relation_1] (active) ✅; [rel2] (waiting) 𝌗: foo`

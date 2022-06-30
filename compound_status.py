@@ -43,8 +43,9 @@ class Status:
         Status._ID += 1
 
         # if tag is None, we'll guess it from the attr name
-        self.tag = tag
-        self._status = "unknown"
+        # and late-bind it
+        self.tag = tag  # type: str
+        self._status = "unknown"  # type: StatusName
         self._message = ""
         self._master = None  # type: Optional[MasterStatus]  # externally managed
 
@@ -70,26 +71,42 @@ class Status:
     def debug(self, msg: str, *args, **kwargs):
         self._logger.debug(msg, *args, **kwargs)
 
-    def set(self, status: StatusName, msg: str = ""):
+    def _set(self, status: StatusName, msg: str = ""):
         assert status in STATUS_NAME_TO_CLASS, "invalid status: {}".format(status)
         assert isinstance(msg, str), type(msg)
 
         self._status = status
         self._message = msg
-        self._master.update()
+
+    def unset(self):
+        """Unsets status and message.
+
+        This status will go back to its initial state and be removed from the
+        Master clobber.
+        """
+
+        self.debug("unset")
+        self._status = "unknown"
+        self._message = ""
 
     def __get__(self, instance, owner):
         return self
 
     def __set__(self, instance, value: StatusBase):
-        self.set(value.name, value.message)
+        self._set(value.name, value.message)
 
     @property
-    def status(self) -> str:
+    def status(self) -> StatusName:
         return self._status
 
     @property
+    def name(self) -> StatusName:
+        """Alias for interface-compatibility with ops.model.StatusBase."""
+        return self.status
+
+    @property
     def message(self) -> str:
+        """The message associated with this status."""
         return self._message
 
     def snapshot(self) -> dict:
@@ -112,34 +129,7 @@ class MasterStatus(Status):
         self._owner = None  # type: CharmBase  # externally managed
         self._user_set = False
 
-        self._on_hold = False
-        self._missed_update = False
-
         self._master = self  # lucky you
-
-    @contextmanager
-    def hold(self, sync=True):
-        """Do not sync status within this context.
-
-        >>> with self.status.hold():
-        >>>     self.status.foo.set('waiting', '...')
-        >>>     self.status.bar.set('waiting', '...')
-        >>>     # lots more statuses...
-        >>> # now we update it all at once.
-        """
-        if self._on_hold:
-            raise ValueError("already holding...?")
-
-        self._on_hold = True
-
-        yield
-
-        self._on_hold = False
-
-        if self._missed_update:
-            self._missed_update = False
-            if sync:
-                self.update()
 
     @property
     def message(self) -> str:
@@ -151,7 +141,7 @@ class MasterStatus(Status):
     def _clobber_statuses(statuses: Sequence[Status], skip_unknown=False) -> str:
         """Produce a message summarizing the child statuses."""
         msgs = []
-        for status in statuses:
+        for status in sorted(statuses, key=lambda s: STATUS_PRIORITIES.index(s.status)):
             if skip_unknown and status.status == "unknown":
                 continue
             msgs.append(
@@ -181,18 +171,17 @@ class MasterStatus(Status):
         status_msg = self.message
         return status_type(status_msg)
 
-    def set(self, status: StatusName, msg: str = ""):
+    def _set(self, status: StatusName, msg: str = ""):
         self._user_set = True
-        super().set(status, msg)
+        super()._set(status, msg)
 
-    def update(self):
-        # cannot coalesce in unknown status
-        if self._on_hold:
-            self._missed_update = True
-            return
+    def unset(self):
+        """Unset all child statuses, as well as any user-set Master status."""
+        super().unset()
 
-        if self.status != "unknown":
-            self._owner.unit.status = self.coalesce()
+        self._user_set = False
+        for child in self.children:
+            child.unset()
 
     def snapshot(self) -> dict:
         dct = super().snapshot()
@@ -206,21 +195,36 @@ class MasterStatus(Status):
         self._message = dct["message"]
         self._user_set = dct["user-set"]
 
+    def __repr__(self):
+        if self.status == "unknown":
+            return "unknown"
+        return str(self.coalesce())
 
-class CompoundStatus(Object):
-    SKIP_UNKNOWN = (
-        False  # whether unknown statuses should be omitted from the master message
-    )
-    master = MasterStatus()
+
+class StatusPool(Object):
+    # whether unknown statuses should be omitted from the master message
+    SKIP_UNKNOWN = False
+    # whether the status should be committed automatically when the hook exits
+    AUTO_COMMIT = True
+
     _state = StoredState()
 
     if typing.TYPE_CHECKING:
         _statuses = {}  # type: Dict[str, Status]
+        _charm = {}  # type: CharmBase
+        master = MasterStatus()  # type: MasterStatus
 
     def __init__(self, charm: CharmBase, key: str = "compound_status"):
         super().__init__(charm, key)
+        self.master = MasterStatus()
+
         self._init_statuses(charm)
         self._load_from_stored_state()
+
+        if self.AUTO_COMMIT:
+            charm.framework.observe(
+                charm.framework.on.commit, self._on_framework_commit
+            )
 
     def _init_statuses(self, charm: CharmBase):
         """Extract the statuses from the class namespace.
@@ -241,18 +245,16 @@ class CompoundStatus(Object):
 
         master.SKIP_UNKNOWN = self.SKIP_UNKNOWN
         master.children = tuple(a[1] for a in statuses)
-        master._owner = charm
         self.__dict__["_statuses"] = dict(statuses)
-
-        all_statuses = chain(map(itemgetter(1), statuses), (master,))
-        self._state.set_default(
-            **{status.tag: json.dumps(status.snapshot()) for status in all_statuses}
-        )
+        self.__dict__["_charm"] = charm
 
     def _load_from_stored_state(self):
         """Retrieve stored state snapshot of current statuses."""
         for status in self._statuses.values():
-            stored = getattr(self._state, status.tag)
+            stored = getattr(self._state, status.tag, None)
+
+            if stored is None:
+                continue
 
             try:
                 dct = json.loads(stored)
@@ -261,23 +263,38 @@ class CompoundStatus(Object):
 
             status.restore(dct)
 
-    # CompoundStatus is a proxy of the master status to some extent
-    def set(self, status: StatusName, message: str):
-        return self.master.set(status, message)
+    def _store(self):
+        """Dump stored state."""
+        all_statuses = chain(map(itemgetter(1), self._statuses.items()), (self.master,))
+        for status in all_statuses:
+            setattr(self._state, status.tag, status.snapshot())
 
     def __setattr__(self, key: str, value: StatusBase):
         if isinstance(value, StatusBase):
             if key == "master":
-                return self.master.set(value.name, value.message)
+                return self.master._set(value.name, value.message)
             elif key in self._statuses:
-                return self._statuses[key].set(value.name, value.message)
+                return self._statuses[key]._set(value.name, value.message)
             else:
                 raise AttributeError(key)
         return super().__setattr__(key, value)
 
-    @property
-    def hold(self):
-        return self.master.hold
+    def _on_framework_commit(self, _event):
+        log.debug("master status auto-committed")
+        self.commit()
 
-    def update(self):
-        self.master.update()
+    def commit(self):
+        """Store the current state and sync with juju."""
+        assert isinstance(self.master, MasterStatus), type(self.master)
+
+        # cannot coalesce in unknown status
+        if self.master.status != "unknown":
+            self._charm.unit.status = self.master.coalesce()
+            self._store()
+
+    def unset(self):
+        """Unsets master status (and all children)."""
+        self.master.unset()
+
+    def __repr__(self):
+        return repr(self.master)

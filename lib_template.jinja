@@ -1,4 +1,33 @@
-'''This charm lib provides a CompoundStatus utility.'''
+'''This charm lib provides a CompoundStatus utility.
+
+Example usage:
+
+>>> class StatusPool(CompoundStatus):
+>>>     SKIP_UNKNOWN = True
+>>>
+>>>     workload = Status()
+>>>     relation_1 = Status()
+>>>     relation_2 = Status(tag='rel2')
+>>>
+>>> class TesterCharm(CharmBase):
+>>>     def __init__(self, framework, key=None):
+>>>         super().__init__(framework, key)
+>>>         status_pool = StatusPool(self)
+>>>
+>>>         # pro tip: keep the messages short
+>>>         status_pool.relation_1 = ActiveStatus('✅')
+>>>         status_pool.commit()  # sync with juju
+>>>         # equivalent to self.unit.status = status_pool.coalesce()
+>>>
+>>>         status_pool.relation_1.unset()  # send status_1 back to unknown, until you set it again.
+>>>
+>>>         status_pool.relation_2 = WaitingStatus('𝌗: foo')
+>>>         status_pool.workload.warning('some debug message about why the workload is blocked')
+>>>         status_pool.workload.info('some info about the workload')
+>>>         status_pool.workload.error('whoopsiedaisies')
+>>>         status_pool.workload = BlockedStatus('blocked', 'see debug-log for the reason')
+>>>         status_pool.commit()
+'''
 
 # The unique Charmhub library identifier, never change it
 LIBID = "2dce4f51241e493dbbbfee1c9bdeb48b"
