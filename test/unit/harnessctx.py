@@ -83,20 +83,3 @@ class HarnessCtx:
         if not self._emitter.emitted:
             self._emitter.emit()
         self._harness.framework.on.commit.emit()
-
-
-if __name__ == "__main__":
-
-    class MyCharm(CharmBase):
-        def __init__(self, framework: Framework, key: typing.Optional = None):
-            super().__init__(framework, key)
-            self.framework.observe(self.on.update_status, self._listen)
-            self.framework.observe(self.framework.on.commit, self._listen)
-
-        def _listen(self, e):
-            self.event = e
-
-    with HarnessCtx(MyCharm, "update-status") as h:
-        event = h.emit()
-        assert event.handle.kind == "update_status"
-    assert h.harness.charm.event.handle.kind == "commit"

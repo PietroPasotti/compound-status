@@ -1,20 +1,20 @@
 import inspect
 import json
+import logging
 import typing
-from contextlib import contextmanager
 from itertools import chain
 from logging import getLogger
 from operator import itemgetter
-from typing import Tuple, Optional, Sequence, Literal, Dict
+from typing import Dict, Literal, Optional, Sequence, Tuple
 
 from ops.charm import CharmBase
-from ops.framework import StoredState, Object
+from ops.framework import Object, StoredState
 from ops.model import (
-    BlockedStatus,
-    WaitingStatus,
-    MaintenanceStatus,
     ActiveStatus,
+    BlockedStatus,
+    MaintenanceStatus,
     StatusBase,
+    WaitingStatus,
 )
 from typing_extensions import Self
 
@@ -32,6 +32,8 @@ STATUS_NAME_TO_CLASS = {
 
 
 class Status:
+    """Represents a status."""
+
     _ID = 0
 
     def __repr__(self):
@@ -48,27 +50,30 @@ class Status:
         self._status = "unknown"  # type: StatusName
         self._message = ""
         self._master = None  # type: Optional[MasterStatus]  # externally managed
-
-    @property
-    def _logger(self):
-        return log.getChild(self.tag)
+        self._logger = None  # type: Optional[logging.Logger]  # externally managed
 
     def log(self, level: int, msg: str, *args, **kwargs):
+        """Associate with this status a log entry with level `log`."""
         self._logger.log(level, msg, *args, **kwargs)
 
     def critical(self, msg: str, *args, **kwargs):
+        """Associate with this status a log entry with level `critical`."""
         self._logger.critical(msg, *args, **kwargs)
 
     def error(self, msg: str, *args, **kwargs):
+        """Associate with this status a log entry with level `error`."""
         self._logger.error(msg, *args, **kwargs)
 
     def warning(self, msg: str, *args, **kwargs):
+        """Associate with this status a log entry with level `warning`."""
         self._logger.warning(msg, *args, **kwargs)
 
     def info(self, msg: str, *args, **kwargs):
+        """Associate with this status a log entry with level `info`."""
         self._logger.info(msg, *args, **kwargs)
 
     def debug(self, msg: str, *args, **kwargs):
+        """Associate with this status a log entry with level `debug`."""
         self._logger.debug(msg, *args, **kwargs)
 
     def _set(self, status: StatusName, msg: str = ""):
@@ -84,7 +89,6 @@ class Status:
         This status will go back to its initial state and be removed from the
         Master clobber.
         """
-
         self.debug("unset")
         self._status = "unknown"
         self._message = ""
@@ -97,6 +101,7 @@ class Status:
 
     @property
     def status(self) -> StatusName:
+        """Return the string representing this status."""
         return self._status
 
     @property
@@ -106,21 +111,25 @@ class Status:
 
     @property
     def message(self) -> str:
-        """The message associated with this status."""
+        """Return the message associated with this status."""
         return self._message
 
-    def snapshot(self) -> dict:
+    def _snapshot(self) -> dict:
+        """Serialize Status for storage."""
         # tag should not change, and is reloaded on each init.
         dct = {"type": "subordinate", "status": self._status, "message": self._message}
         return dct
 
-    def restore(self, dct) -> Self:
+    def _restore(self, dct) -> Self:
+        """Restore Status from stored state."""
         assert dct["type"] == "subordinate", dct["type"]
         self._status = dct["status"]
         self._message = dct["message"]
 
 
 class MasterStatus(Status):
+    """The Master status of the pool."""
+
     SKIP_UNKNOWN = False
 
     def __init__(self, tag: Optional[str] = "master"):
@@ -129,10 +138,12 @@ class MasterStatus(Status):
         self._owner = None  # type: CharmBase  # externally managed
         self._user_set = False
 
+        self._logger = log.getChild(tag)
         self._master = self  # lucky you
 
     @property
     def message(self) -> str:
+        """Return the message associated with this status."""
         if self._user_set:
             return self._message
         return self._clobber_statuses(self.children, self.SKIP_UNKNOWN)
@@ -159,12 +170,14 @@ class MasterStatus(Status):
 
     @property
     def status(self) -> str:
+        """Return the status."""
         if self._user_set:
             return self._status
         statuses = [c.status for c in self.children]
         return self._get_worst_case(statuses)
 
     def coalesce(self) -> StatusBase:
+        """Cast to an ops.model.StatusBase instance by clobbering statuses and messages."""
         if self.status == "unknown":
             raise ValueError("cannot coalesce unknown status")
         status_type = STATUS_NAME_TO_CLASS[self.status]
@@ -172,6 +185,10 @@ class MasterStatus(Status):
         return status_type(status_msg)
 
     def _set(self, status: StatusName, msg: str = ""):
+        """Force-set this status and message.
+
+        Should not be called by user code.
+        """
         self._user_set = True
         super()._set(status, msg)
 
@@ -183,13 +200,15 @@ class MasterStatus(Status):
         for child in self.children:
             child.unset()
 
-    def snapshot(self) -> dict:
-        dct = super().snapshot()
+    def _snapshot(self) -> dict:
+        """Serialize Status for storage."""
+        dct = super()._snapshot()
         dct["type"] = "master"
         dct["user-set"] = self._user_set
         return dct
 
-    def restore(self, dct) -> Self:
+    def _restore(self, dct) -> Self:
+        """Restore Status from stored state."""
         assert dct["type"] == "master", dct["type"]
         self._status = dct["status"]
         self._message = dct["message"]
@@ -202,6 +221,8 @@ class MasterStatus(Status):
 
 
 class StatusPool(Object):
+    """Represents the pool of statuses available to an Object."""
+
     # whether unknown statuses should be omitted from the master message
     SKIP_UNKNOWN = False
     # whether the status should be committed automatically when the hook exits
@@ -231,17 +252,19 @@ class StatusPool(Object):
 
         And associate them with the master status.
         """
-        is_status = lambda obj: isinstance(obj, Status) and not isinstance(
-            obj, MasterStatus
-        )
-        statuses_ = inspect.getmembers(self, is_status)
+
+        def _is_child_status(obj):
+            return isinstance(obj, Status) and not isinstance(obj, MasterStatus)
+
+        statuses_ = inspect.getmembers(self, predicate=_is_child_status)
         statuses = sorted(statuses_, key=lambda s: s[1]._id)
 
         master = self.master
-        # bind children to master, set tag if unset.
+        # bind children to master, set tag if unset, init logger
         for attr, obj in statuses:
-            obj.tag = obj.tag or attr
+            obj.tag = tag = obj.tag or attr
             obj._master = master
+            obj._logger = master._logger.getChild(tag)
 
         master.SKIP_UNKNOWN = self.SKIP_UNKNOWN
         master.children = tuple(a[1] for a in statuses)
@@ -261,20 +284,20 @@ class StatusPool(Object):
             except json.JSONDecodeError as e:
                 raise ValueError("not a valid status: {}".format(stored)) from e
 
-            status.restore(dct)
+            status._restore(dct)  # noqa
 
     def _store(self):
         """Dump stored state."""
         all_statuses = chain(map(itemgetter(1), self._statuses.items()), (self.master,))
         for status in all_statuses:
-            setattr(self._state, status.tag, status.snapshot())
+            setattr(self._state, status.tag, status._snapshot())  # noqa
 
     def __setattr__(self, key: str, value: StatusBase):
         if isinstance(value, StatusBase):
             if key == "master":
-                return self.master._set(value.name, value.message)
+                return self.master._set(value.name, value.message)  # noqa
             elif key in self._statuses:
-                return self._statuses[key]._set(value.name, value.message)
+                return self._statuses[key]._set(value.name, value.message)  # noqa
             else:
                 raise AttributeError(key)
         return super().__setattr__(key, value)
