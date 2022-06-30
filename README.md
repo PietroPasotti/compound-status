@@ -1,7 +1,7 @@
 # What this is
 
 ```python
-class StatusPool(CompoundStatus):
+class MyPool(StatusPool):
     SKIP_UNKNOWN = True
 
     workload = Status()
@@ -12,7 +12,7 @@ class StatusPool(CompoundStatus):
 class TesterCharm(CharmBase):
     def __init__(self, framework, key=None):
         super().__init__(framework, key)
-        status_pool = StatusPool(self)
+        status_pool = MyPool(self)
 
         # pro tip: keep the messages short
         status_pool.relation_1 = ActiveStatus('✅')
@@ -29,8 +29,12 @@ class TesterCharm(CharmBase):
 ``` 
 
 You get:
-`tst/0*  blocked   idle   <IP>   [workload] (blocked) 💔; [relation_1] (active) ✅; [rel2] (waiting) 𝌗: foo`
+`tst/0*  blocked   idle   <IP>   (workload:blocked) 💔; (relation_1:active) ✅; (rel2:waiting) 𝌗: foo`
 
+
+# How to get it
+
+`charmcraft fetch-lib charms.compound_status.v0.compound_status`
 
 # How to contribute
 if you want to publish a new revision, you can run `scripts/update.sh`.
