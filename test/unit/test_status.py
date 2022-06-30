@@ -62,7 +62,7 @@ def test_statuses_setting(charm):
     charm.status.commit()
 
     assert charm.unit.status.name == "active"
-    assert charm.unit.status.message == "[relation_1] (active) foo"
+    assert charm.unit.status.message == "(relation_1:active) foo"
 
 
 def test_statuses_setting_magic(charm):
@@ -73,7 +73,7 @@ def test_statuses_setting_magic(charm):
     charm.status.commit()
 
     assert charm.unit.status.name == "active"
-    assert charm.unit.status.message == "[relation_1] (active) foo"
+    assert charm.unit.status.message == "(relation_1:active) foo"
 
 
 def test_statuses_priority(charm):
@@ -83,7 +83,7 @@ def test_statuses_priority(charm):
     charm.status.commit()
     assert charm.status.master.status == "waiting"
     assert (
-        charm.status.master.message == "[rel2] (waiting) bar; [relation_1] (active) foo"
+        charm.status.master.message == "(rel2:waiting) bar; (relation_1:active) foo"
     )
 
     charm.status.workload = BlockedStatus("qux")
@@ -92,7 +92,7 @@ def test_statuses_priority(charm):
     assert charm.status.master.status == "blocked"
     assert (
         charm.status.master.message
-        == "[workload] (blocked) qux; [rel2] (waiting) bar; [relation_1] (active) foo"
+        == "(workload:blocked) qux; (rel2:waiting) bar; (relation_1:active) foo"
     )
 
 
@@ -180,7 +180,7 @@ def test_stored(charm):
     # we have reinited the charm, so harness has set it to 'maintenance'
     # a real live charm would remain blocked.
     # assert restored_charm.unit.status.name == 'blocked'
-    assert restored_charm.status.master.message == "[relation_1] (blocked) foo"
+    assert restored_charm.status.master.message == "(relation_1:blocked) foo"
 
     # we have reinited the charm, so harness has set it to ''
     # assert restored_charm.unit.status.message == "foo"
@@ -194,7 +194,7 @@ def test_auto_commit(charm_type):
         charm.status.relation_1 = ActiveStatus("boop")
 
     assert charm.unit.status.name == "active"
-    assert charm.unit.status.message == MasterStatus._clobber_statuses(
+    assert charm.unit.status.message == charm.status.master._clobber_statuses(
         (charm.status.relation_1, charm.status.relation_2)
     )
 
@@ -214,7 +214,7 @@ def test_auto_commit_off(charm_type):
     charm.status.commit()
 
     assert charm.unit.status.name == "active"
-    assert charm.unit.status.message == MasterStatus._clobber_statuses(
+    assert charm.unit.status.message == charm.status.master._clobber_statuses(
         (charm.status.relation_1, charm.status.relation_2)
     )
 
@@ -242,4 +242,4 @@ def test_unset_master(charm):
 
     # as if nothing happened
     assert charm.unit.status.name == "active"
-    assert charm.unit.status.message == "[workload] (active) woot"
+    assert charm.unit.status.message == "(workload:active) woot"

@@ -128,12 +128,29 @@ class Status:
 
 
 class MasterStatus(Status):
-    """The Master status of the pool."""
+    """The Master status of the pool.
+
+    Parameters:
+        - `tag`: the name to associate the master status with.
+
+        - `fmt`: The format for each child status. Needs to contain three {}
+            slots, will receive three arguments in this order:
+
+            - the tag of the child status (a string)
+            - the name of the child status (e.g. 'blocked', or 'active')
+            - the message associated with the child status (another string)
+
+        - `sep`: The separator used to join together the child statuses.
+    """
 
     SKIP_UNKNOWN = False
 
-    def __init__(self, tag: Optional[str] = "master"):
+    def __init__(
+        self, tag: Optional[str] = "master", fmt: str = "({0}:{1}) {2}", sep: str = "; "
+    ):
         super().__init__(tag)
+        self._fmt = fmt
+        self._sep = sep
         self.children = ()  # type: Tuple[Status, ...]  # gets populated by CompoundStatus
         self._owner = None  # type: CharmBase  # externally managed
         self._user_set = False
@@ -148,17 +165,14 @@ class MasterStatus(Status):
             return self._message
         return self._clobber_statuses(self.children, self.SKIP_UNKNOWN)
 
-    @staticmethod
-    def _clobber_statuses(statuses: Sequence[Status], skip_unknown=False) -> str:
+    def _clobber_statuses(self, statuses: Sequence[Status], skip_unknown=False) -> str:
         """Produce a message summarizing the child statuses."""
         msgs = []
         for status in sorted(statuses, key=lambda s: STATUS_PRIORITIES.index(s.status)):
             if skip_unknown and status.status == "unknown":
                 continue
-            msgs.append(
-                "[{}] ({}) {}".format(status.tag, status.status, status.message)
-            )
-        return "; ".join(msgs)
+            msgs.append(self._fmt.format(status.tag, status.status, status.message))
+        return self._sep.join(msgs)
 
     @staticmethod
     def _get_worst_case(statuses: Sequence[str]):
