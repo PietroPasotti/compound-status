@@ -241,6 +241,8 @@ class StatusPool(Object):
     SKIP_UNKNOWN = False
     # whether the status should be committed automatically when the hook exits
     AUTO_COMMIT = True
+    # key used to register handle
+    KEY = "status_pool"
 
     _state = StoredState()
 
@@ -249,9 +251,10 @@ class StatusPool(Object):
         _charm = {}  # type: CharmBase
         master = MasterStatus()  # type: MasterStatus
 
-    def __init__(self, charm: CharmBase, key: str = "compound_status"):
-        super().__init__(charm, key)
-        self.master = MasterStatus()
+    def __init__(self, charm: CharmBase, key: str = None):
+        super().__init__(charm, key or self.KEY)
+        # skip setattr
+        self.__dict__["master"] = MasterStatus()
 
         self._init_statuses(charm)
         self._load_from_stored_state()
@@ -282,6 +285,8 @@ class StatusPool(Object):
 
         master.SKIP_UNKNOWN = self.SKIP_UNKNOWN
         master.children = tuple(a[1] for a in statuses)
+
+        # skip setattr
         self.__dict__["_statuses"] = dict(statuses)
         self.__dict__["_charm"] = charm
 

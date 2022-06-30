@@ -1,4 +1,5 @@
 import pytest
+import yaml
 from ops.charm import CharmBase
 from ops.framework import Handle
 from ops.model import (
@@ -243,3 +244,57 @@ def test_unset_master(charm):
     # as if nothing happened
     assert charm.unit.status.name == "active"
     assert charm.unit.status.message == "(workload:active) woot"
+
+
+def test_recursive_pool():
+    """Test for a specific use case"""
+
+    class CharmStatus(StatusPool):
+        SKIP_UNKNOWN = True
+        relation_1 = Status()
+
+    class MyCharm(CharmBase):
+        _STATUS_CLS = CharmStatus
+
+        def __init__(self, framework, key=None):
+            super().__init__(framework, key)
+            self.status = CharmStatus(self)
+
+        def update_relation_1_status(self, statuses: dict):
+            class RelationStatus(StatusPool):
+                KEY = "relation_1"
+                master = MasterStatus(tag='relation_1')
+
+            for relation in self.model.relations['relation_1']:
+                tag = relation.app.name.replace('-', '_')
+                setattr(RelationStatus, tag, Status())
+
+            relation_status = RelationStatus(self)
+
+            for key, value in statuses.items():
+                setattr(relation_status, key, value)
+
+            self.status.relation_1 = relation_status.master.coalesce()
+
+    h = Harness(MyCharm, meta=yaml.safe_dump({"requires": {"relation_1": {"interface": "foo"}}}))
+    h.begin()
+    charm = h.charm
+
+    r1_id = h.add_relation("relation_1", "remote_app_1")
+    h.add_relation_unit(r1_id, 'remote_app_1/0')
+    r2_id = h.add_relation("relation_1", "remote_app_2")
+    h.add_relation_unit(r2_id, 'remote_app_2/0')
+    r3_id = h.add_relation("relation_1", "remote_app_3")
+    h.add_relation_unit(r3_id, 'remote_app_3/0')
+
+    charm.update_relation_1_status(
+        {
+            "remote_app_1": ActiveStatus("this relation is OK"),
+            "remote_app_2": WaitingStatus("this relation is waiting"),
+            "remote_app_3": BlockedStatus("this relation is BORK")
+        }
+    )
+
+    charm.status.commit()
+    assert charm.unit.status.name == 'blocked'
+    assert charm.unit.status.message == '(relation_1:blocked) (remote_app_3:blocked) this relation is BORK; (remote_app_2:waiting) this relation is waiting; (remote_app_1:active) this relation is OK'
