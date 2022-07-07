@@ -79,7 +79,11 @@ Caveats:
 
 ## Dynamically defining Statuses
 
-Having statically defined Statuses is nice because you get code completion, type hints, and so on, but sometimes it's not enough. Sometimes you want to use statuses to track intrinsically dynamic things, such as many relations attached to an endpoint. Every time a unit joins, you want to track the status of the relation with that remote in a separate status. For that purpose, we offer `StatusPool.add_status` and `StatusPool.remove_status`.
+Having statically defined Statuses is nice because you get code completion, type hints, and so on, but sometimes it's not enough. Sometimes you want to use statuses to track intrinsically dynamic things, such as many relations attached to an endpoint. Every time a unit joins, you want to track the status of the relation with that remote in a separate status. For that purpose, we offer 
+ -`StatusPool.add_status` to add and start tracking a new status
+ -`StatusPool.get_status` to grab an existing status by name (alias to `getattr`)
+ -`StatusPool.set_status` to set a status by name (alias to `setattr`)
+ -`StatusPool.remove_status` to remove (forget) an existing status 
 
 Example usage (pseudocody):
 
