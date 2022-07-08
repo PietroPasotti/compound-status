@@ -41,9 +41,28 @@ Juju status will display:
 Only the 'worst' status is displayed.
 The logging message, tagged with `['workload']`, will be visible in `juju debug-log`.
 
+## The statuses
+
+Sorted best-to-worst, all possible statuses are:
+ - `unknown`
+ - `active`
+ - `maintenance`
+ - `waiting`
+ - `blocked`
+
+Their intended usage mirrors that of [statuses in charms](https://discourse.charmhub.io/t/status-values/1168). 
+
+In `ops` you can't set a Unit status to `unknown`. Unknown is reserved for units that are not initialized yet (i.e. the charm hasn't had a chance to run). 
+
+Here `unknown` is also special.
+
+  - When you first create the pool, all statuses start off as `unknown`.
+  - `unknown` means: not relevant/not interesting, such as when a non-necessary relation for a charm is not present. As such, you typically don't want to surface unknown statuses to the user. Therefore, you can also choose to set the class attribute `StatusPool.SKIP_UNKNOWN=True` to automatically hide `unknown` statuses from the clobbered pool message.
+  - As soon as you set a status, the status can be brought back to `unknown` only by calling `Status.unset()`, unlike other statuses, which can be set by assignment like so: `self.status_pool.foo = WaitingStatus('bar')`
+ 
 ## Priority
 
-To disambiguate when you have multiple 'just as bad' statuses, the concept of `priority` comes into play.
+To unambiguously be able to point out the 'worst' status in a pool, the concept of `priority` comes into play.
 By default, the order of definition of the Statuses in the pool determines their priority:
 from top to bottom = from most important to least important.
 Example:
