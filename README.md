@@ -1,43 +1,49 @@
-from ops.framework import Framework# What this is
+In complex charms that have multiple parallel duties, we often see that it is not enough to know if the charm as a whole is `active/blocked/waiting/...`; charmers search for ways to track multiple statuses independently. We want to tell the user: 'the charm as a whole is blocked, because this part is blocked, that other part is waiting, and that other part over there is doing maintenance'.
+That is, we want a taxonomy of statuses.
 
+The first step to get there is to allow charmers to define the status as a pool of independently-trackable statuses that can be associated with tasks, components, integrations, or (why not) individual relations.
+
+# What this is
+
+This charm lib exposes utilities to create 'status pools'. 
 ```python
 from compound_status import *
 
 class MyPool(StatusPool):
-    SKIP_UNKNOWN = True
+    """This defines my charm's status pool."""
+    workload = Status()  # this tracks the workload status
+    relation_1 = Status()  # this tracks my integration #1
+    relation_2 = Status()  # this tracks my integration #2
 
-    workload = Status()
-    relation_1 = Status()
-    relation_2 = Status(tag='rel2')
-
-
-class TesterCharm(CharmBase):
+    
+class MyCharm(CharmBase):
     def __init__(self, framework, key=None):
         super().__init__(framework, key)
         status_pool = MyPool(self)
 
-        # pro tip: keep the messages short
         status_pool.relation_1 = ActiveStatus('✅')
         status_pool.commit()  # sync with juju
         
         status_pool.relation_1.unset()  # send status_1 back to unknown, until you set it again. 
         
         status_pool.relation_2 = WaitingStatus('𝌗: foo')
-        status_pool.workload.warning('some debug message about why the workload is blocked')
-        status_pool.workload.info('some info about the workload')
-        status_pool.workload.error('whoopsiedaisies')
-        status_pool.workload = BlockedStatus('see debug-log for the reason')
+        status_pool.workload.warning('found something weird')
+        status_pool.workload.info('attempting to work around...')
+        status_pool.workload.error('whoopsiedaisies!')
+        status_pool.workload = BlockedStatus('💔')
         status_pool.commit()   
 ``` 
 
-You get:
-`tst/0*  blocked   idle   <IP>   (workload) 💔`
-Only the 'worst' status is displayed.
+Juju status will display:
 
+`tst/0*  blocked   idle   <IP>   (workload) 💔`
+
+Only the 'worst' status is displayed.
+The logging message, tagged with `['workload']`, will be visible in `juju debug-log`.
 
 ## Priority
 
-To disambiguate when you have multiple equivalent statuses, the concept of `priority` comes into play.
+To disambiguate when you have multiple 'just as bad' statuses, the concept of `priority` comes into play.
 By default, the order of definition of the Statuses in the pool determines their priority:
 from top to bottom = from most important to least important.
 Example:
@@ -45,8 +51,6 @@ Example:
 ```python
 from compound_status import *
 class MyPool(StatusPool):
-    SKIP_UNKNOWN = True
-
     relation_1 = Status()       # priority 1
     relation_2 = Status()       # priority 2
     relation_3 = Status()       # priority 3
@@ -92,8 +96,7 @@ from compound_status import *
 from ops.charm import RelationDepartedEvent, RelationJoinedEvent
 
 class MyPool(StatusPool):
-    SKIP_UNKNOWN = True
-    workload = Status(priority=40)
+    workload = Status()
 
 
 class MyCharm(CharmBase):
