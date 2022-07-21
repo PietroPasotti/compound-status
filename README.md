@@ -179,10 +179,6 @@ class MyCharm(CharmBase):
 
 `charmcraft fetch-lib charms.compound_status.v0.compound_status`
 
-Before you can use the library, you'll need to install its only dependency: 
-
-`pip install typing_extensions`
-
 # How to contribute
 if you want to publish a new revision, you can run `scripts/update.sh`.
 This will 
