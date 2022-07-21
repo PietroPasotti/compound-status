@@ -27,25 +27,25 @@ async def test_deploy(tester_charm, ops_test: OpsTest):
                                            raise_on_blocked=False)
 
 
-def assert_status(ops_test, name, message, agent_status='idle'):
+def assert_status(ops_test, name, message=None, agent_status='idle'):
     unit = ops_test.model.units["tester/0"]
     assert unit.agent_status == agent_status
     assert unit.workload_status == name
-    assert unit.agent_status_message == message
+    if message:
+        assert unit.workload_status_message == message
 
 
+async def test_initial_status(ops_test: OpsTest):
+    assert_status(ops_test, "active")
 
-async def test_initial_status(ops_test:OpsTest):
-    assert_status(ops_test, "active", "")
 
-
-async def test_status_persistence(tester_charm, ops_test: OpsTest):
+async def test_status_persistence(ops_test: OpsTest):
     # cause update-status to fire a couple of times
     async with ops_test.fast_forward():
         await asyncio.sleep(11)
 
     # verify that status is unchanged
-    assert_status(ops_test, "active", "")
+    assert_status(ops_test, "active")
 
 
 async def test_status_change(tester_charm, ops_test: OpsTest):
