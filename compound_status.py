@@ -26,9 +26,6 @@ from ops.model import (
     WaitingStatus,
 )
 from ops.storage import NoSnapshotError
-from typing_extensions import Self
-
-from lib.charms.compound_status.v0.compound_status import Status
 
 log = getLogger("compound-status")
 
@@ -45,12 +42,13 @@ STATUS_NAME_TO_CLASS = {
 }
 
 
-class _StatusDict(TypedDict):
+class _StatusDict(TypedDict, total=False):
     type: Literal["subordinate", "master"]  # noqa
     status: str
     message: str
     tag: str
     attr: str
+    user_set: bool
 
 
 PositiveNumber = Union[float, int]
@@ -96,14 +94,14 @@ class Status:
         return self._priority
 
     @staticmethod
-    def priority_key(status: Union[Status, StatusName]):
+    def priority_key(status: Union["Status", StatusName]):
         """Return the priority key."""
         if isinstance(status, str):
             return STATUS_PRIORITIES[status]
         return STATUS_PRIORITIES[status.status], -status.priority
 
     @staticmethod
-    def sort(statuses: Sequence[Status]):
+    def sort(statuses: Sequence["Status"]):
         """Return the statuses, sorted worst-to-best."""
         return sorted(statuses, key=Status.priority_key, reverse=True)
 
@@ -186,7 +184,7 @@ class Status:
         }
         return dct
 
-    def _restore(self, dct: _StatusDict) -> Self:
+    def _restore(self, dct: _StatusDict):
         """Restore Status from stored state."""
         assert dct["type"] == "subordinate", dct["type"]
         self._status = dct["status"]
@@ -197,7 +195,7 @@ class Status:
     def __hash__(self):
         return hash((self.tag, self.status, self.message))
 
-    def __eq__(self, other: Status) -> bool:
+    def __eq__(self, other: "Status") -> bool:
         return hash(self) == hash(other)
 
 
@@ -384,26 +382,26 @@ class MasterStatus(Status):
         super()._set(status, msg)
 
     def unset(self):
-        """Unset all child statuses, as well as any user-set Master status."""
+        """Unset all child statuses, as well as any user_set Master status."""
         super().unset()
 
         self._user_set = False
         for child in self.children:
             child.unset()
 
-    def _snapshot(self) -> dict:
+    def _snapshot(self) -> _StatusDict:
         """Serialize Status for storage."""
         dct = super()._snapshot()
         dct["type"] = "master"
-        dct["user-set"] = self._user_set
+        dct["user_set"] = self._user_set
         return dct
 
-    def _restore(self, dct) -> Self:
+    def _restore(self, dct: _StatusDict):
         """Restore Status from stored state."""
         assert dct["type"] == "master", dct["type"]
         self._status = dct["status"]
         self._message = dct["message"]
-        self._user_set = dct["user-set"]
+        self._user_set = dct["user_set"]
 
     def __repr__(self):
         if not self.children:
