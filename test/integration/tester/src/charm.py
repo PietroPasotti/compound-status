@@ -24,17 +24,22 @@ logger = logging.getLogger(__name__)
 
 class CharmStatus(StatusPool):
     SKIP_UNKNOWN = True
+    AUTO_COMMIT = False
 
-    workload = Status()
-    relation_1 = Status()
-    relation_2 = Status(tag="rel2")
+    workload = Status(priority=5)
+    relation_1 = Status(priority=10)
+    relation_2 = Status(tag="rel2", priority=1)
 
 
 class TesterCharm(CharmBase):
     def __init__(self, framework, key=None):
         super().__init__(framework, key)
         self.status_pool = status_pool = CharmStatus(self)
+        self.framework.observe(self.on.config_changed, self._on_config_change)
+        self.framework.observe(self.on.start, self._start)
 
+    def _start(self, _):
+        status_pool = self.status_pool
         status_pool.relation_1 = ActiveStatus("✅")
         status_pool.relation_2 = ActiveStatus("𝌗: foo")
 
@@ -44,16 +49,16 @@ class TesterCharm(CharmBase):
         status_pool.workload.info("some info about the workload")
 
         status_pool.workload = ActiveStatus("💔")
-
-        self.framework.observe(self.on.config_changed, self._on_config_change)
+        status_pool.commit()
 
     def _on_config_change(self, _):
-        self.status_pool.relation_2.set(
+        self.status_pool.relation_2._set(
             self.config["status"], self.config["message"]
         )
         self.status_pool.relation_2.info(
             f'status changed to {self.config["status"], self.config["message"]}'
         )
+        self.status_pool.commit()
 
 
 if __name__ == "__main__":
