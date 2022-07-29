@@ -188,3 +188,8 @@ This will
 
 When you bump to a new (major) version, you'll have to manually change the 
 value of `$LIB_V` in `scripts/publish.sh`.
+
+# Demo charm
+
+There is a demo charm implementing StatusPool with both a static and a dynamic use case, where you can try out most of the features in a live setup.
+https://github.com/PietroPasotti/status-pool-example
