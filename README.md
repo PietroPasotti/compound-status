@@ -5,34 +5,39 @@ The first step to get there is to allow charmers to define the status as a pool 
 
 # What this is
 
-This charm lib exposes utilities to create 'status pools'. 
+This charm lib exposes utilities to create 'status pools'.
 ```python
-from compound_status import *
+from compound_status import StatusPool, Status
 
-class MyPool(StatusPool):
-    """This defines my charm's status pool."""
-    workload = Status()  # this tracks the workload status
-    relation_1 = Status()  # this tracks my integration #1
-    relation_2 = Status()  # this tracks my integration #2
-
-    
 class MyCharm(CharmBase):
     def __init__(self, framework, key=None):
         super().__init__(framework, key)
-        status_pool = MyPool(self)
+        status_pool = StatusPool(self)
+        status_pool.add(Status("workload"))  # this tracks workload status
+        status_pool.add(Status("relation_1"))  # this tracks my integration #1
+        status_pool.add(Status("relation_2"))  # this tracks my integration #2
 
-        status_pool.relation_1 = ActiveStatus('✅')
+        status_pool.set_status("relation_1", ActiveStatus('✅'))
+        status_pool.relation_2 = ActiveStatus('✅')
+
+        workload_status = status_pool.workload
+        workload_status.status = ActiveStatus('✅')
+        ...
+
         status_pool.commit()  # sync with juju
-        
-        status_pool.relation_1.unset()  # send status_1 back to unknown, until you set it again. 
-        
+
+        status_pool.relation_1.unset()  # send status_1 back to unknown, until you set it again.
+
         status_pool.relation_2 = WaitingStatus('𝌗: foo')
+
+        # write some logs with automatic prefixes based on the status name
         status_pool.workload.warning('found something weird')
         status_pool.workload.info('attempting to work around...')
         status_pool.workload.error('whoopsiedaisies!')
+
         status_pool.workload = BlockedStatus('💔')
-        status_pool.commit()   
-``` 
+        status_pool.commit()
+```
 
 Juju status will display:
 
@@ -50,78 +55,68 @@ Sorted best-to-worst, all possible statuses are:
  - `waiting`
  - `blocked`
 
-Their intended usage mirrors that of [statuses in charms](https://discourse.charmhub.io/t/status-values/1168). 
+Their intended usage mirrors that of [statuses in charms](https://discourse.charmhub.io/t/status-values/1168).
 
-In `ops` you can't set a Unit status to `unknown`. Unknown is reserved for units that are not initialized yet (i.e. the charm hasn't had a chance to run). 
+In `ops` you can't set a Unit status to `unknown`. Unknown is reserved for units that are not initialized yet (i.e. the charm hasn't had a chance to run).
 
 Here `unknown` is also special.
 
   - When you first create the pool, all statuses start off as `unknown`.
-  - `unknown` means: not relevant/not interesting, such as when a non-necessary relation for a charm is not present. As such, you typically don't want to surface unknown statuses to the user. Therefore, you can also choose to set the class attribute `StatusPool.SKIP_UNKNOWN=True` to automatically hide `unknown` statuses from the clobbered pool message.
-  - As soon as you set a status, the status can be brought back to `unknown` only by calling `Status.unset()`, unlike other statuses, which can be set by assignment like so: `self.status_pool.foo = WaitingStatus('bar')`
- 
+  - `unknown` means: not relevant/not interesting, such as when a non-necessary relation for a charm is not present. As such, you typically don't want to surface unknown statuses to the user. Therefore, you can also choose to init the pool with attribute `skip_unknown=True` to automatically hide `unknown` statuses from the summarized pool message.
+  - As soon as you set a status, the status can be brought back to `unknown` by calling `Status.unset()` (a handy shortcut).  You can also set the status to `UnknownStatus()` directly.
+
 ## Priority
 
 To unambiguously be able to point out the 'worst' status in a pool, the concept of `priority` comes into play.
-By default, the order of definition of the Statuses in the pool determines their priority:
-from top to bottom = from most important to least important.
+By default, the order of addition of the Statuses in the pool determines their priority:
+from first to list == from most important to least important.
 Example:
 
 ```python
 from compound_status import *
-class MyPool(StatusPool):
-    relation_1 = Status()       # priority 1
-    relation_2 = Status()       # priority 2
-    relation_3 = Status()       # priority 3
-    workload = Status()         # priority 4
-    relation_4 = Status()       # priority 5
+status_pool = StatusPool(self)
+status_pool.add(Status("workload"))  # priority 1
+status_pool.add(Status("relation_1"))  # priority 2
+status_pool.add(Status("relation_2"))  # priority 3
 ```
 
-In this case, if all are active except `relation_3` and `workload`, which are both `blocked`, only the status for `relation_3` will be shown, because it has been defined first and has therefore implicitly priority 3.
+In this case, if all are active except `workload` and `relation_2`, which are both `blocked`, only the status for `workload` will be shown, because it has been added first and has therefore implicitly priority 3.
 
-To allow more flexibility (subclassing, whatnot), you can also manually pass priorities to the Statuses, like so:
+To allow more flexibility, you can also manually pass priorities to the Statuses, like so:
 
 ```python
 from compound_status import *
-class MyPool(StatusPool):
-    SKIP_UNKNOWN = True
-
-    relation_1 = Status(priority=12)
-    relation_2 = Status(priority=10)
-    relation_3 = Status(priority=62)
-    workload = Status(priority=40)
-    relation_4 = Status(priority=1)
+status_pool = StatusPool(self)
+status_pool.add(Status("workload", priority=99))  # priority 3
+status_pool.add(Status("relation_1", priority=1))  # priority 1
+status_pool.add(Status("relation_2", priority=3))  # priority 2
 ```
 
-In this case, if `relation_3` has lower priority than `workload`, so if both are blocked `workload` will take precedence.
+In this case, if `workload` has lower priority than `relation_1`, so if both are blocked `relation_1` will take precedence.
 
-Caveats:
- - you can't mix 'manual' and 'auto' priority modes: either you pass `priority:int` to each and every status, or to none at all.
- - You have to ensure yourself that no two Statuses have the same priority. In that case, the precedence will be (presumably) random.
+Notes:
+- priority defaults to `0` if not explicitly set, thus ties are broken by insertion order (assuming stable sorting is used in summarizing functions).
 
+TODO: document how to use and create summarizer functions.
 
-## Dynamically defining Statuses
+TODO: document what auto_commit does and what commits are in this context.
 
-Having statically defined Statuses is nice because you get code completion, type hints, and so on, but sometimes it's not enough. Sometimes you want to use statuses to track intrinsically dynamic things, such as many relations attached to an endpoint. Every time a unit joins, you want to track the status of the relation with that remote in a separate status. For that purpose, we offer 
- -`StatusPool.add_status` to add and start tracking a new status
- -`StatusPool.get_status` to grab an existing status by name (alias to `getattr`)
- -`StatusPool.set_status` to set a status by name (alias to `setattr`)
- -`StatusPool.remove_status` to remove (forget) an existing status 
+## Example
 
-Example usage (pseudocody):
+Here's an example that uses more advanced features:
 
 ```python
-from compound_status import *
+from compound_status import StatusPool, Status
 from ops.charm import RelationDepartedEvent, RelationJoinedEvent
 
 class MyPool(StatusPool):
     workload = Status()
 
-
 class MyCharm(CharmBase):
     def __init__(self, framework, key=None):
         super().__init__(framework, key)
-        self.status_pool = MyPool(self)
+        self.status_pool = StatusPool(self)
+        self.status_pool.add(Status('workload'))
         self.framework.observe(self.on.workload_pebble_ready,
                                self._workload_ready)
         self.framework.observe(self.on.foo_relation_joined,
@@ -137,38 +132,35 @@ class MyCharm(CharmBase):
 
     def _foo_relation_joined(self, event:RelationJoinedEvent):
         remote_unit_name = event.unit  # the unit that just joined
-        identifier = remote_unit_name.replace('/', '_')
-        status = Status(tag=remote_unit_name)
-        self.status_pool.add_status(status, identifier)
-        
-        # from now on you can:
-        stat = getattr(self.status_pool, identifier)
+        status = Status(remote_unit_name)
+        self.status_pool.add(status)
+
+        # now it's in the pool
+        stat = self.status_pool.get(remote_unit_name)
         assert stat is status
-        
+
     def _foo_relation_changed(self, event):
         for remote_unit in event.relation.units:
-            identifier = remote_unit.name.replace('/', '_')
-            
             # you can access the 'previous' status:
             # same as: getattr(self.status_pool, identifier)
-            previous_status = self.status_pool.get_status(identifier)
+            previous_status = self.status_pool.get(remote_unit.name)
             print(previous_status)
-            
+
             # for example
             new_status = WaitingStatus('this relation is waiting')
             previous_status.warning('waiting because...')
-            
+
             # and then you can
-            self.status_pool.set_status(identifier, new_status)
-            # same as: setattr(self.status_pool, identifier, new_status)
-            
+            self.status_pool.set_status(remote_unit.name, new_status)
+            # same as this, because remember that `previous_status` is a `Status` object in the pool:
+            # previous_status.status = new_status
+
     def _foo_relation_departed(self, event: RelationDepartedEvent):
         remote_unit_name = event.departing_unit.name
-        identifier = remote_unit_name.replace('/', '_')
-        current_status = self.status_pool.get_status(identifier)
-        if current_status.status == 'blocked':
+        current_status = self.status_pool.get(remote_unit_name)
+        if current_status.get_status_name() == 'blocked':
             current_status.error(
-                'This unit departed while the relation status was blocked;' 
+                'This unit departed while the relation status was blocked;'
                 'this means very bad things.')
         # forget about this status:
         self.status_pool.remove_status(current_status)
@@ -181,12 +173,12 @@ class MyCharm(CharmBase):
 
 # How to contribute
 if you want to publish a new revision, you can run `scripts/update.sh`.
-This will 
+This will
  - Bump the revision
  - Inline the lib
  - Publish the lib
 
-When you bump to a new (major) version, you'll have to manually change the 
+When you bump to a new (major) version, you'll have to manually change the
 value of `$LIB_V` in `scripts/publish.sh`.
 
 # Demo charm

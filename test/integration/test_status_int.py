@@ -59,4 +59,4 @@ async def test_status_change(tester_charm, ops_test: OpsTest):
         await asyncio.sleep(10)
 
     # verify that status is updated correctly
-    assert_status(ops_test, "waiting", "(rel2) for godot")
+    assert_status(ops_test, "waiting", "(relation_2) for godot")
