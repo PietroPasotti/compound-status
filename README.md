@@ -169,7 +169,11 @@ class MyCharm(CharmBase):
 
 # How to get it
 
-`charmcraft fetch-lib charms.compound_status.v0.compound_status`
+```
+charmcraft fetch-lib charms.compound_status.v0.compound_status
+```
+
+TODO: docs for installing from git and possibly pypi in the future
 
 # How to contribute
 if you want to publish a new revision, you can run `scripts/update.sh`.

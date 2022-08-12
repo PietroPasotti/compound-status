@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "compound_status"
+version = "0.0.1"
+authors = [
+  { name="Example Author", email="author@example.com" },
+]
+description = "A small example package"
+readme = "README.md"
+# license = { file="LICENSE" }
+requires-python = ">=3.6"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+dependencies = [
+    "ops",
+]
+
+[tool.setuptools]
+py-modules = ["compound_status"]
+
+[project.urls]
+"Homepage" = "https://github.com/PietroPasotti/compound-status/"
+"Bug Tracker" = "https://github.com/PietroPasotti/compound-status/issues"
