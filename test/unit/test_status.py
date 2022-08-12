@@ -298,8 +298,8 @@ def test_dynamic_pool():
     pool = h.charm.status
     pool.add(Status('foo')._set('active', 'foo'))
     pool.add(Status('bar')._set('active', 'bar'))
-    assert pool.get("foo").status == ActiveStatus("foo")
-    assert pool.get("bar").status == ActiveStatus("bar")
+    assert pool.get("foo").get() == ActiveStatus("foo")
+    assert pool.get("bar").get() == ActiveStatus("bar")
 
     assert len(pool._pool) == 2
     pool.add(Status('woo')._set('blocked', 'meow'))

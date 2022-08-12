@@ -37,7 +37,7 @@ Number = Union[float, int]
 
 def _priority_key(status: "Status") -> Tuple[int, Number]:
     """Return the priority key, used to sort statuses."""
-    return STATUS_PRIORITIES[status.status.name], status.priority
+    return STATUS_PRIORITIES[status.get().name], status.priority
 
 
 class Status:
@@ -45,12 +45,12 @@ class Status:
 
     def __repr__(self):
         return "<Status {} ({}): {}>".format(
-            self.status.name, self.name, self.get_message()
+            self._status.name, self.name, self.get_message()
         )
 
     def __init__(self, name: str, priority: Number = 0):
         self._logger = log.getChild(name)
-        self.status = UnknownStatus()
+        self._status = UnknownStatus()
         # this name shouldn't be changed after adding to a pool,
         # because it ideally should remain in sync with
         # the pool's identifier for the status.
@@ -83,18 +83,22 @@ class Status:
 
         Useful because UnknownStatus has no message attribute.
         """
-        if self.status.name == "unknown":
+        if self._status.name == "unknown":
             return ""
-        return self.status.message
+        return self._status.message
+
+    def get(self) -> StatusBase:
+        """Get the actual status."""
+        return self._status
 
     def get_status_name(self) -> StatusName:
         """Get the StatusName of the status."""
-        return typing.cast(StatusName, self.status.name)
+        return typing.cast(StatusName, self._status.name)
 
     def _serialize(self) -> _StatusDict:
         """Serialize Status for storage."""
         dct: _StatusDict = {
-            "status": typing.cast(StatusName, self.status.name),
+            "status": typing.cast(StatusName, self._status.name),
             "message": self.get_message(),
             "name": self.name,
         }
@@ -102,14 +106,19 @@ class Status:
 
     def _deserialize(self, dct: _StatusDict):
         """Restore Status from stored state."""
-        self.status = StatusBase.from_name(
+        self._status = StatusBase.from_name(
             dct.get("status", "unknown"), dct.get("message", "")
         )
         self.name = dct.get("name")
 
+    def set(self, status: StatusBase):  # noqa: A003
+        """Set the status."""
+        self._status = status
+        return self
+
     def _set(self, status: StatusName, msg: str = ""):
         """For testing purposes."""
-        self.status = StatusBase.from_name(status, msg)
+        self._status = StatusBase.from_name(status, msg)
         return self
 
     def unset(self):
@@ -118,10 +127,10 @@ class Status:
 
         (UnknownStatus)
         """
-        self.status = UnknownStatus()
+        self._status = UnknownStatus()
 
     def __hash__(self):
-        return hash((self.name, self.status.name, self.get_message()))
+        return hash((self.name, self._status.name, self.get_message()))
 
     def __eq__(self, other: "Status") -> bool:
         return hash(self) == hash(other)
@@ -159,12 +168,12 @@ def summarize_worst_first(statuses: List[Status], skip_unknown: bool) -> str:
     """
     msgs = []
     for status in sorted(statuses, key=_priority_key):
-        if skip_unknown and status.status.name == "unknown":
+        if skip_unknown and status.get_status_name() == "unknown":
             continue
         msgs.append(
             "({0}:{1}) {2}".format(
                 status.name,
-                status.status.name,
+                status.get_status_name(),
                 status.get_message(),
             )
         )
@@ -253,7 +262,7 @@ class StatusPool(Object):
 
     def set_status(self, name: str, status: StatusBase):
         """Set a status by name."""
-        self._pool[name].status = status
+        self._pool[name].set(status)
 
     def __getattr__(self, name: str) -> Status:
         """
@@ -288,7 +297,7 @@ class StatusPool(Object):
         # or to set a standard attribute on the class.
         # There may be a neater method; we want to use the principle of least surprise here.
         if isinstance(value, StatusBase):
-            self._pool[name].status = value
+            self.set_status(name, value)
         else:
             super().__setattr__(name, value)
 
@@ -347,7 +356,7 @@ class StatusPool(Object):
 
         worst_status = sorted(self._pool.values(), key=_priority_key)[0]
         return StatusBase.from_name(
-            worst_status.status.name,
+            worst_status.get_status_name(),
             self._summarizer_func(
                 list(self._pool.values()), self._skip_unknown
             ),
