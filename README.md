@@ -105,6 +105,8 @@ TODO: document what auto_commit does and what commits are in this context.
 
 Here's an example that uses more advanced features:
 
+TODO: update this and other examples in the readme
+
 ```python
 from compound_status import StatusPool, Status
 from ops.charm import RelationDepartedEvent, RelationJoinedEvent
@@ -158,7 +160,7 @@ class MyCharm(CharmBase):
     def _foo_relation_departed(self, event: RelationDepartedEvent):
         remote_unit_name = event.departing_unit.name
         current_status = self.status_pool.get(remote_unit_name)
-        if current_status.get_status_name() == 'blocked':
+        if current_status.get_name() == 'blocked':
             current_status.error(
                 'This unit departed while the relation status was blocked;'
                 'this means very bad things.')

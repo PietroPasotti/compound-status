@@ -21,6 +21,7 @@ from charms.compound_status.v0.compound_status import StatusPool, Status
 
 logger = logging.getLogger(__name__)
 
+# TODO: update this
 
 class TesterCharm(CharmBase):
     def __init__(self, framework, key=None):

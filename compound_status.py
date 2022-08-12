@@ -2,16 +2,7 @@ import json
 import typing
 from collections import Counter
 from logging import CRITICAL, DEBUG, ERROR, INFO, WARNING, getLogger
-from typing import (
-    Callable,
-    Dict,
-    List,
-    Literal,
-    Optional,
-    Tuple,
-    TypedDict,
-    Union,
-)
+from typing import Callable, Dict, List, Literal, Optional, Tuple, TypedDict
 
 from ops.charm import CharmBase
 from ops.framework import Handle, Object, StoredStateData
@@ -29,15 +20,13 @@ STATUS_PRIORITIES: Dict[str, int] = {val: i for i, val in enumerate(STATUSES)}
 class _StatusDict(TypedDict):
     status: StatusName
     message: str
-    name: str
+    label: str
+    priority: str
 
 
-Number = Union[float, int]
-
-
-def _priority_key(status: "Status") -> Tuple[int, Number]:
+def _priority_key(status: "Status") -> Tuple[int, int]:
     """Return the priority key, used to sort statuses."""
-    return STATUS_PRIORITIES[status.get().name], status.priority
+    return STATUS_PRIORITIES[status.get_name()], status.get_priority()
 
 
 class Status:
@@ -45,17 +34,17 @@ class Status:
 
     def __repr__(self):
         return "<Status {} ({}): {}>".format(
-            self._status.name, self.name, self.get_message()
+            self._status.name, self._label, self.get_message()
         )
 
-    def __init__(self, name: str, priority: Number = 0):
-        self._logger = log.getChild(name)
+    def __init__(self, label: str, priority: int = 0):
+        self._logger = log.getChild(label)
         self._status = UnknownStatus()
-        # this name shouldn't be changed after adding to a pool,
+        # this label mustn't be changed after adding to a pool,
         # because it ideally should remain in sync with
         # the pool's identifier for the status.
-        self.name = name
-        self.priority = priority
+        self._label = label
+        self._priority = priority
 
     def critical(self, msg: str, *args, **kwargs):
         """Associate with this status a log entry with level `critical`."""
@@ -77,6 +66,18 @@ class Status:
         """Associate with this status a log entry with level `debug`."""
         self._logger.log(DEBUG, msg, *args, **kwargs)
 
+    def get_label(self) -> str:
+        """Get the label of this status."""
+        return self._label
+
+    def get_priority(self) -> int:
+        """Get the priority of this status."""
+        return self._priority
+
+    def get_status(self) -> StatusBase:
+        """Get the actual status."""
+        return self._status
+
     def get_message(self) -> str:
         """
         Get the status message consistently.
@@ -87,35 +88,16 @@ class Status:
             return ""
         return self._status.message
 
-    def get(self) -> StatusBase:
-        """Get the actual status."""
-        return self._status
-
-    def get_status_name(self) -> StatusName:
+    def get_name(self) -> StatusName:
         """Get the StatusName of the status."""
         return typing.cast(StatusName, self._status.name)
 
-    def _serialize(self) -> _StatusDict:
-        """Serialize Status for storage."""
-        dct: _StatusDict = {
-            "status": typing.cast(StatusName, self._status.name),
-            "message": self.get_message(),
-            "name": self.name,
-        }
-        return dct
-
-    def _deserialize(self, dct: _StatusDict):
-        """Restore Status from stored state."""
-        self._status = StatusBase.from_name(
-            dct.get("status", "unknown"), dct.get("message", "")
-        )
-        self.name = dct.get("name")
-
     def set(self, status: StatusBase):  # noqa: A003
-        """Set the status."""
+        """Set the status and return it."""
         self._status = status
         return self
 
+    # TODO: remove this
     def _set(self, status: StatusName, msg: str = ""):
         """For testing purposes."""
         self._status = StatusBase.from_name(status, msg)
@@ -129,8 +111,18 @@ class Status:
         """
         self._status = UnknownStatus()
 
+    def _to_dict(self) -> _StatusDict:
+        """Serialize Status for storage."""
+        dct: _StatusDict = {
+            "status": typing.cast(StatusName, self._status.name),
+            "message": self.get_message(),
+            "label": self._label,
+            "priority": str(self._priority),
+        }
+        return dct
+
     def __hash__(self):
-        return hash((self.name, self._status.name, self.get_message()))
+        return hash((self._label, self._status.name, self.get_message()))
 
     def __eq__(self, other: "Status") -> bool:
         return hash(self) == hash(other)
@@ -151,7 +143,7 @@ def summarize_worst_only(statuses: List[Status], _) -> str:
     if not statuses:
         return ""
     worst = sorted(statuses, key=_priority_key)[0]
-    return f"({worst.name}) {worst.get_message()}"
+    return f"({worst.get_label()}) {worst.get_message()}"
 
 
 def summarize_worst_first(statuses: List[Status], skip_unknown: bool) -> str:
@@ -168,12 +160,12 @@ def summarize_worst_first(statuses: List[Status], skip_unknown: bool) -> str:
     """
     msgs = []
     for status in sorted(statuses, key=_priority_key):
-        if skip_unknown and status.get_status_name() == "unknown":
+        if skip_unknown and status.get_name() == "unknown":
             continue
         msgs.append(
             "({0}:{1}) {2}".format(
-                status.name,
-                status.get_status_name(),
+                status.get_label(),
+                status.get_name(),
                 status.get_message(),
             )
         )
@@ -199,7 +191,7 @@ def summarize_condensed(statuses: List[Status], skip_unknown: bool) -> str:
     If all are active the message will be empty.
     Priority will be ignored.
     """
-    ctr = Counter(s.get_status_name() for s in statuses)
+    ctr = Counter(s.get_name() for s in statuses)
 
     if set(ctr) == {
         "active",
@@ -231,8 +223,6 @@ class StatusPool(Object):
     ):
         super().__init__(charm, key)
         self._pool = {}  # type: Dict[str, Status]
-        self._manual_priorities = False
-        self._priority_counter = 0
         self._summarizer_func = summarizer
         self._skip_unknown = skip_unknown
         self._charm = charm
@@ -271,7 +261,7 @@ class StatusPool(Object):
         Allows things like this:
 
         ```
-        assert pool.workload.get_status_name() == "active"
+        assert pool.workload.get_name() == "active"
         pool.workload.debug("logging a debug message")
         ```
         """
@@ -301,21 +291,37 @@ class StatusPool(Object):
         else:
             super().__setattr__(name, value)
 
-    def add(self, status: Status):
+    def define_status(self, name: str, priority: int = 0) -> Status:
         """
-        Idempotently add a Status to the pool.
+        Define a status in the pool with a name and optional priority.
+
+        Return the status object that was defined and added to the pool.
+
+        This is the only official way to build and get a Status object,
+        ensuring that adding/defining statuses plays well with reconstituted
+        statuses from stored state.
 
         Note that if no priorities are set on the status,
         the priority defaults to 0.
         Ties are broken by insertion order into the pool,
         so if no statuses are set, the priority order will
-        effectively be the order they were added.
+        effectively be the order they were defined with this function.
         """
-        self._pool[status.name] = status
+        status = self._pool.get(name)
+        # basically, update the priority if it already exists,
+        # but don't reset the status to unknown.
+        # Note that this logic also means that calling define_status(x)
+        # always will return the same Status object.
+        if status is not None:
+            status._priority = priority
+        else:
+            status = Status(name, priority=priority)
+            self._pool[name] = status
+        return status
 
-    def remove_status(self, status: Status):
+    def remove_status(self, label: str):
         """Remove the status and forget about it."""
-        self._pool.pop(status.name)
+        self._pool.pop(label)
 
     def _load_from_stored_state(self):
         """Retrieve stored state snapshot of current statuses."""
@@ -324,12 +330,15 @@ class StatusPool(Object):
             json.loads(typing.cast(str, self._state["statuses"])),
         )
         for name, status_dict in stored_statuses.items():
-            if name in self._pool:
-                self._pool[name]._deserialize(status_dict)
-            else:
-                status = Status(name=status_dict["name"])
-                status._deserialize(status_dict)
-                self.add(status)
+            status = self.define_status(
+                status_dict["label"], int(status_dict["priority"])
+            )
+            status.set(
+                StatusBase.from_name(
+                    status_dict["status"],
+                    status_dict["message"],
+                )
+            )
 
     def _on_autocommit(self, _event):
         log.debug("master status auto-committed")
@@ -339,7 +348,7 @@ class StatusPool(Object):
         """Store the current state and sync with juju."""
         self._charm.unit.status = self.summarize()
         self._state["statuses"] = json.dumps(
-            {name: status._serialize() for name, status in self._pool.items()}
+            {name: status._to_dict() for name, status in self._pool.items()}
         )
         self._charm.framework.save_snapshot(self._state)  # type: ignore
         self._charm.framework._storage.commit()
@@ -356,7 +365,7 @@ class StatusPool(Object):
 
         worst_status = sorted(self._pool.values(), key=_priority_key)[0]
         return StatusBase.from_name(
-            worst_status.get_status_name(),
+            worst_status.get_name(),
             self._summarizer_func(
                 list(self._pool.values()), self._skip_unknown
             ),
