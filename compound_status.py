@@ -97,12 +97,6 @@ class Status:
         self._status = status
         return self
 
-    # TODO: remove this
-    def _set(self, status: StatusName, msg: str = ""):
-        """For testing purposes."""
-        self._status = StatusBase.from_name(status, msg)
-        return self
-
     def unset(self):
         """
         Reset the status back to the initial status.
