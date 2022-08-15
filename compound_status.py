@@ -9,14 +9,15 @@ from operator import itemgetter
 from typing import (
     TYPE_CHECKING,
     Dict,
+    Iterable,
     Literal,
     Optional,
     Sequence,
+    Set,
     Tuple,
-    Iterable,
     Type,
     TypedDict,
-    Union, Set,
+    Union,
 )
 
 from ops.charm import CharmBase
@@ -56,12 +57,10 @@ class Status:
     _ID = 0
 
     def __repr__(self):
-        return "<Status {} ({}): {}>".format(self._status, self.tag,
-                                             self._message)
+        return "<Status {} ({}): {}>".format(self._status, self.tag, self._message)
 
     def __init__(
-            self, tag: Optional[str] = None,
-            priority: Optional[PositiveNumber] = None
+        self, tag: Optional[str] = None, priority: Optional[PositiveNumber] = None
     ):
         # to keep track of instantiation order
         self._id = Status._ID
@@ -80,12 +79,13 @@ class Status:
 
         if priority is not None:
             if not isinstance(priority, (float, int)):
-                raise TypeError(
-                    f"priority needs to be float|int, not {type(priority)}")
+                raise TypeError(f"priority needs to be float|int, not {type(priority)}")
             if priority <= 0:
                 raise TypeError(f"priority needs to be > 0, not {priority}")
 
-        self._priority = priority  # type: Optional[PositiveNumber]  # externally managed
+        self._priority = (
+            priority
+        )  # type: Optional[PositiveNumber]  # externally managed
 
     @property
     def priority(self):
@@ -172,11 +172,14 @@ class Status:
 
     def _snapshot(self) -> _StatusDict:
         """Serialize Status for storage."""
+        # fixme: when externally managed state goes, these should too
         # tag should not change, and is reloaded on each init.
         attr = self._attr
         assert attr, attr  # type guard
         tag = self.tag
         assert tag, tag  # type guard
+        priority = self.priority
+        assert priority, priority  # type guard
 
         dct: _StatusDict = {
             "type": "subordinate",
@@ -184,7 +187,7 @@ class Status:
             "message": self._message,
             "tag": tag,
             "attr": attr,
-            "priority": self.priority
+            "priority": priority,
         }
         return dct
 
@@ -222,8 +225,7 @@ class Status:
 class Clobberer:
     """Clobberer. Repeat it many times fast."""
 
-    def clobber(self, statuses: Iterable[Status],
-                skip_unknown: bool = False) -> str:
+    def clobber(self, statuses: Iterable[Status], skip_unknown: bool = False) -> str:
         """Produce a clobbered representation of the statuses."""
         raise NotImplementedError
 
@@ -243,8 +245,7 @@ class WorstOnly(Clobberer):
     def __init__(self, fmt: str = "({0}) {1}", sep: str = "; "):
         self._fmt = fmt
 
-    def clobber(self, statuses: Iterable[Status],
-                skip_unknown: bool = False) -> str:
+    def clobber(self, statuses: Iterable[Status], skip_unknown: bool = False) -> str:
         """Produce a clobbered representation of the statuses."""
         worst = Status.sort(statuses)[0]
         return self._fmt.format(worst.tag, worst.message)
@@ -272,8 +273,7 @@ class Summary(Clobberer):
         for status in Status.sort(statuses):
             if skip_unknown and status.status == "unknown":
                 continue
-            msgs.append(
-                self._fmt.format(status.tag, status.status, status.message))
+            msgs.append(self._fmt.format(status.tag, status.status, status.message))
         return self._sep.join(msgs)
 
 
@@ -311,8 +311,7 @@ class Condensed(Clobberer):
 
         msgs = []
         for status, count in sorted(
-                ctr.items(), key=lambda v: Status.priority_key(v[0]),
-                reverse=True
+            ctr.items(), key=lambda v: Status.priority_key(v[0]), reverse=True
         ):
             if skip_unknown and status == "unknown":
                 continue
@@ -339,13 +338,15 @@ class MasterStatus(Status):
     SKIP_UNKNOWN = False
 
     def __init__(
-            self,
-            tag: str = "master",
-            clobberer: Clobberer = WorstOnly(),
-            priority: Optional[PositiveNumber] = None,
+        self,
+        tag: str = "master",
+        clobberer: Clobberer = WorstOnly(),
+        priority: Optional[PositiveNumber] = None,
     ):
         super().__init__(tag, priority=priority)
-        self.children = set()  # type: Set[Status, ...]  # gets populated by CompoundStatus
+        self.children = (
+            set()
+        )  # type: Set[Status]  # gets populated by CompoundStatus
         self._owner = None  # type: Optional[CharmBase]  # externally managed
         self._user_set = False
         self._clobberer = clobberer
@@ -382,7 +383,7 @@ class MasterStatus(Status):
         return self._clobber_statuses(self.children, self.SKIP_UNKNOWN)
 
     def _clobber_statuses(
-            self, statuses: Iterable[Status], skip_unknown: bool = False
+        self, statuses: Iterable[Status], skip_unknown: bool = False
     ) -> str:
         """Produce a message summarizing the child statuses."""
         return self._clobberer.clobber(statuses, skip_unknown)
@@ -473,8 +474,7 @@ class StatusPool(Object):
         self.__dict__["_statuses"] = {}
         self.__dict__["_priority_counter"] = 0
 
-        stored_handle = Handle(self, StoredStateData.handle_kind,
-                               "_status_pool_state")
+        stored_handle = Handle(self, StoredStateData.handle_kind, "_status_pool_state")
         charm.framework.register_type(
             StoredStateData, self, StoredStateData.handle_kind
         )
@@ -488,8 +488,8 @@ class StatusPool(Object):
         self._load_from_stored_state()
         if self.AUTO_COMMIT:
             charm.framework.observe(
-                charm.framework.on.commit, self._on_framework_commit
-                # type: ignore
+                charm.framework.on.commit,  # type: ignore
+                self._on_framework_commit
             )
 
     def get_status(self, attr: str) -> Status:
@@ -574,8 +574,7 @@ class StatusPool(Object):
     def _load_from_stored_state(self):
         """Retrieve stored state snapshot of current statuses."""
         statuses_raw = typing.cast(str, self._state["statuses"])
-        stored_statuses = typing.cast(Dict[str, _StatusDict],
-                                      json.loads(statuses_raw))
+        stored_statuses = typing.cast(Dict[str, _StatusDict], json.loads(statuses_raw))
         for attr, status_dct in stored_statuses.items():
             if attr == "*master*":
                 status = self.master
@@ -592,15 +591,13 @@ class StatusPool(Object):
 
     def _store(self):
         """Dump stored state."""
-        all_statuses = chain(map(itemgetter(1), self._statuses.items()),
-                             (self.master,))
+        all_statuses = chain(map(itemgetter(1), self._statuses.items()), (self.master,))
         statuses = {s._attr: s._snapshot() for s in all_statuses}
         self._state["statuses"] = json.dumps(statuses)
 
     def __setattr__(self, key: str, value: StatusBase):
         if isinstance(value, StatusBase):
-            name = typing.cast(Optional[StatusName],
-                               getattr(value, "name", None))
+            name = typing.cast(Optional[StatusName], getattr(value, "name", None))
             if name not in STATUSES:
                 raise RuntimeError(
                     f"You cannot set {self} to {value}; its name is {name}, "
