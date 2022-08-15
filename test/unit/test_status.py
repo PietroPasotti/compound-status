@@ -366,10 +366,6 @@ def test_dynamic_pool():
     pool.add_status(Status(tag='woo')._set('blocked', 'meow'))
     assert len(master.children) == 3
 
-    with pytest.raises(ValueError):
-        # already added a status with the same tag
-        pool.add_status(Status(tag='woo'))
-
     # this will work
     woo = Status(tag='woo')
     pool.add_status(woo, attr='wooz')

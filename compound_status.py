@@ -13,9 +13,10 @@ from typing import (
     Optional,
     Sequence,
     Tuple,
+    Iterable,
     Type,
     TypedDict,
-    Union,
+    Union, Set,
 )
 
 from ops.charm import CharmBase
@@ -35,25 +36,18 @@ StatusName = Literal["blocked", "waiting", "maintenance", "unknown", "active"]
 # are sorted best-to-worst
 STATUSES = ("unknown", "active", "maintenance", "waiting", "blocked")
 STATUS_PRIORITIES: Dict[str, int] = {val: i for i, val in enumerate(STATUSES)}
-STATUS_NAME_TO_CLASS: Dict[StatusName, Type[StatusBase]] = {
-    "blocked": BlockedStatus,
-    "waiting": WaitingStatus,
-    "maintenance": MaintenanceStatus,
-    "active": ActiveStatus
-    # omit unknown as it should not be used directly.
-}
+
+PositiveNumber = Union[float, int]
 
 
 class _StatusDict(TypedDict, total=False):
     type: Literal["subordinate", "master"]  # noqa
     status: StatusName
     message: str
+    priority: PositiveNumber
     tag: str
     attr: str
     user_set: bool
-
-
-PositiveNumber = Union[float, int]
 
 
 class Status:
@@ -62,10 +56,12 @@ class Status:
     _ID = 0
 
     def __repr__(self):
-        return "<Status {} ({}): {}>".format(self._status, self.tag, self._message)
+        return "<Status {} ({}): {}>".format(self._status, self.tag,
+                                             self._message)
 
     def __init__(
-        self, tag: Optional[str] = None, priority: Optional[PositiveNumber] = None
+            self, tag: Optional[str] = None,
+            priority: Optional[PositiveNumber] = None
     ):
         # to keep track of instantiation order
         self._id = Status._ID
@@ -84,11 +80,12 @@ class Status:
 
         if priority is not None:
             if not isinstance(priority, (float, int)):
-                raise TypeError(f"priority needs to be float|int, not {type(priority)}")
+                raise TypeError(
+                    f"priority needs to be float|int, not {type(priority)}")
             if priority <= 0:
                 raise TypeError(f"priority needs to be > 0, not {priority}")
 
-        self._priority = priority  # type: Optional[float]  # externally managed
+        self._priority = priority  # type: Optional[PositiveNumber]  # externally managed
 
     @property
     def priority(self):
@@ -103,7 +100,7 @@ class Status:
         return STATUS_PRIORITIES[status.status], -(status.priority or 0)
 
     @staticmethod
-    def sort(statuses: Sequence["Status"]):
+    def sort(statuses: Iterable["Status"]):
         """Return the statuses, sorted worst-to-best."""
         return sorted(statuses, key=Status.priority_key, reverse=True)
 
@@ -115,26 +112,25 @@ class Status:
 
     def critical(self, msg: str, *args, **kwargs):
         """Associate with this status a log entry with level `critical`."""
-        self.log(50, msg, *args, **kwargs)
+        self.log(logging.CRITICAL, msg, *args, **kwargs)
 
     def error(self, msg: str, *args, **kwargs):
         """Associate with this status a log entry with level `error`."""
-        self.log(40, msg, *args, **kwargs)
+        self.log(logging.ERROR, msg, *args, **kwargs)
 
     def warning(self, msg: str, *args, **kwargs):
         """Associate with this status a log entry with level `warning`."""
-        self.log(30, msg, *args, **kwargs)
+        self.log(logging.WARNING, msg, *args, **kwargs)
 
     def info(self, msg: str, *args, **kwargs):
         """Associate with this status a log entry with level `info`."""
-        self.log(20, msg, *args, **kwargs)
+        self.log(logging.INFO, msg, *args, **kwargs)
 
     def debug(self, msg: str, *args, **kwargs):
         """Associate with this status a log entry with level `debug`."""
-        self.log(10, msg, *args, **kwargs)
+        self.log(logging.DEBUG, msg, *args, **kwargs)
 
     def _set(self, status: StatusName, msg: str = ""):
-        assert status in STATUS_NAME_TO_CLASS, "invalid status: {}".format(status)
         assert isinstance(msg, str), type(msg)
 
         self._status = status
@@ -188,6 +184,7 @@ class Status:
             "message": self._message,
             "tag": tag,
             "attr": attr,
+            "priority": self.priority
         }
         return dct
 
@@ -199,16 +196,19 @@ class Status:
 
         status = dct.get("status")
         message = dct.get("message")
+        priority = dct.get("priority")
         tag = dct.get("tag")
         attr = dct.get("attr")
 
         assert status is not None, status
         assert message is not None, message
+        assert priority is not None, priority
         assert tag is not None, tag
         assert attr is not None, attr
 
         self._status = status
         self._message = message
+        self._priority = priority
         self.tag = tag
         self._attr = attr
 
@@ -222,7 +222,8 @@ class Status:
 class Clobberer:
     """Clobberer. Repeat it many times fast."""
 
-    def clobber(self, statuses: Sequence[Status], skip_unknown: bool = False) -> str:
+    def clobber(self, statuses: Iterable[Status],
+                skip_unknown: bool = False) -> str:
         """Produce a clobbered representation of the statuses."""
         raise NotImplementedError
 
@@ -242,7 +243,8 @@ class WorstOnly(Clobberer):
     def __init__(self, fmt: str = "({0}) {1}", sep: str = "; "):
         self._fmt = fmt
 
-    def clobber(self, statuses: Sequence[Status], skip_unknown: bool = False) -> str:
+    def clobber(self, statuses: Iterable[Status],
+                skip_unknown: bool = False) -> str:
         """Produce a clobbered representation of the statuses."""
         worst = Status.sort(statuses)[0]
         return self._fmt.format(worst.tag, worst.message)
@@ -264,13 +266,14 @@ class Summary(Clobberer):
         self._fmt = fmt
         self._sep = sep
 
-    def clobber(self, statuses: Sequence[Status], skip_unknown: bool = False):
+    def clobber(self, statuses: Iterable[Status], skip_unknown: bool = False):
         """Produce a clobbered representation of the statuses."""
         msgs = []
         for status in Status.sort(statuses):
             if skip_unknown and status.status == "unknown":
                 continue
-            msgs.append(self._fmt.format(status.tag, status.status, status.message))
+            msgs.append(
+                self._fmt.format(status.tag, status.status, status.message))
         return self._sep.join(msgs)
 
 
@@ -297,7 +300,7 @@ class Condensed(Clobberer):
         self._fmt = fmt
         self._sep = sep
 
-    def clobber(self, statuses: Sequence[Status], skip_unknown: bool = False):
+    def clobber(self, statuses: Iterable[Status], skip_unknown: bool = False):
         """Produce a clobbered representation of the statuses."""
         ctr = Counter(s.status for s in statuses)
 
@@ -308,7 +311,8 @@ class Condensed(Clobberer):
 
         msgs = []
         for status, count in sorted(
-            ctr.items(), key=lambda v: Status.priority_key(v[0]), reverse=True
+                ctr.items(), key=lambda v: Status.priority_key(v[0]),
+                reverse=True
         ):
             if skip_unknown and status == "unknown":
                 continue
@@ -335,13 +339,13 @@ class MasterStatus(Status):
     SKIP_UNKNOWN = False
 
     def __init__(
-        self,
-        tag: str = "master",
-        clobberer: Clobberer = WorstOnly(),
-        priority: Optional[PositiveNumber] = None,
+            self,
+            tag: str = "master",
+            clobberer: Clobberer = WorstOnly(),
+            priority: Optional[PositiveNumber] = None,
     ):
         super().__init__(tag, priority=priority)
-        self.children = ()  # type: Tuple[Status, ...]  # gets populated by CompoundStatus
+        self.children = set()  # type: Set[Status, ...]  # gets populated by CompoundStatus
         self._owner = None  # type: Optional[CharmBase]  # externally managed
         self._user_set = False
         self._clobberer = clobberer
@@ -359,7 +363,7 @@ class MasterStatus(Status):
         assert tag  # type guard
 
         status._logger = logger.getChild(tag)
-        self.children = self.children + (status,)
+        self.children.add(status)
 
     def _remove_child(self, status: Status):
         """Remove a child status."""
@@ -368,7 +372,7 @@ class MasterStatus(Status):
 
         status._master = None
         status._logger = None
-        self.children = tuple(a for a in self.children if a is not status)
+        self.children.remove(status)
 
     @property
     def message(self) -> str:
@@ -378,7 +382,7 @@ class MasterStatus(Status):
         return self._clobber_statuses(self.children, self.SKIP_UNKNOWN)
 
     def _clobber_statuses(
-        self, statuses: Sequence[Status], skip_unknown: bool = False
+            self, statuses: Iterable[Status], skip_unknown: bool = False
     ) -> str:
         """Produce a message summarizing the child statuses."""
         return self._clobberer.clobber(statuses, skip_unknown)
@@ -394,9 +398,8 @@ class MasterStatus(Status):
         """Cast to an ops.model.StatusBase instance by clobbering statuses and messages."""
         if self.status == "unknown":
             raise ValueError("cannot coalesce unknown status")
-        status_type = STATUS_NAME_TO_CLASS[self.status]
-        status_msg = self.message
-        return status_type(status_msg)
+        ops_status = StatusBase.from_name(self.status, self.message)
+        return ops_status
 
     def _set(self, status: StatusName, msg: str = ""):
         """Force-set this status and message.
@@ -461,7 +464,6 @@ class StatusPool(Object):
         _statuses = {}  # type: Dict[str, Status]
         _charm: CharmBase
         master = MasterStatus()  # type: MasterStatus
-        _manual_priorities = False  # type: bool
         _priority_counter = 0  # type: int
 
     def __init__(self, charm: CharmBase, key: Optional[str] = None):
@@ -469,10 +471,10 @@ class StatusPool(Object):
         # skip setattr
         self.__dict__["master"] = MasterStatus()
         self.__dict__["_statuses"] = {}
-        self.__dict__["_manual_priorities"] = False
         self.__dict__["_priority_counter"] = 0
 
-        stored_handle = Handle(self, StoredStateData.handle_kind, "_status_pool_state")
+        stored_handle = Handle(self, StoredStateData.handle_kind,
+                               "_status_pool_state")
         charm.framework.register_type(
             StoredStateData, self, StoredStateData.handle_kind
         )
@@ -486,7 +488,8 @@ class StatusPool(Object):
         self._load_from_stored_state()
         if self.AUTO_COMMIT:
             charm.framework.observe(
-                charm.framework.on.commit, self._on_framework_commit  # type: ignore
+                charm.framework.on.commit, self._on_framework_commit
+                # type: ignore
             )
 
     def get_status(self, attr: str) -> Status:
@@ -534,26 +537,9 @@ class StatusPool(Object):
         delattr(self, attr)
 
     def _add_status(self, status: Status, attr: str):
-        if getattr(self, attr, None) not in {status, None}:
-            raise ValueError(
-                f"cannot set {attr!r} = {status}." f"attribute already set on {self}"
-            )
-
-        if status.priority is None:
-            if self._manual_priorities:
-                raise ValueError(
-                    "Either pass a priority to all Statuses, "
-                    "or leave it blank for all."
-                )
-        else:
-            self._manual_priorities = True
-
-        if not self._manual_priorities:
+        if not status.priority:
             self._priority_counter += 1
             status._priority = self._priority_counter
-
-        if status.priority and status.priority > 100:
-            raise ValueError("Status priority cannot be > 100")
 
         status.tag = status.tag or attr
         self.master._add_child(status)  # noqa
@@ -579,7 +565,7 @@ class StatusPool(Object):
             self._add_status(obj, attr)
 
         master.SKIP_UNKNOWN = self.SKIP_UNKNOWN
-        master.children = tuple(a[1] for a in statuses)
+        master.children = set(a[1] for a in statuses)
 
         # skip setattr
         self.__dict__["_statuses"] = dict(statuses)
@@ -588,7 +574,8 @@ class StatusPool(Object):
     def _load_from_stored_state(self):
         """Retrieve stored state snapshot of current statuses."""
         statuses_raw = typing.cast(str, self._state["statuses"])
-        stored_statuses = typing.cast(Dict[str, _StatusDict], json.loads(statuses_raw))
+        stored_statuses = typing.cast(Dict[str, _StatusDict],
+                                      json.loads(statuses_raw))
         for attr, status_dct in stored_statuses.items():
             if attr == "*master*":
                 status = self.master
@@ -605,13 +592,15 @@ class StatusPool(Object):
 
     def _store(self):
         """Dump stored state."""
-        all_statuses = chain(map(itemgetter(1), self._statuses.items()), (self.master,))
+        all_statuses = chain(map(itemgetter(1), self._statuses.items()),
+                             (self.master,))
         statuses = {s._attr: s._snapshot() for s in all_statuses}
         self._state["statuses"] = json.dumps(statuses)
 
     def __setattr__(self, key: str, value: StatusBase):
         if isinstance(value, StatusBase):
-            name = typing.cast(Optional[StatusName], getattr(value, "name", None))
+            name = typing.cast(Optional[StatusName],
+                               getattr(value, "name", None))
             if name not in STATUSES:
                 raise RuntimeError(
                     f"You cannot set {self} to {value}; its name is {name}, "
