@@ -12,23 +12,14 @@ from typing import (
     Iterable,
     Literal,
     Optional,
-    Sequence,
     Set,
-    Tuple,
-    Type,
     TypedDict,
     Union,
 )
 
 from ops.charm import CharmBase
 from ops.framework import Handle, Object, StoredStateData
-from ops.model import (
-    ActiveStatus,
-    BlockedStatus,
-    MaintenanceStatus,
-    StatusBase,
-    WaitingStatus,
-)
+from ops.model import StatusBase
 from ops.storage import NoSnapshotError
 
 log = getLogger("compound-status")
@@ -344,9 +335,7 @@ class MasterStatus(Status):
         priority: Optional[PositiveNumber] = None,
     ):
         super().__init__(tag, priority=priority)
-        self.children = (
-            set()
-        )  # type: Set[Status]  # gets populated by CompoundStatus
+        self.children = set()  # type: Set[Status]  # gets populated by CompoundStatus
         self._owner = None  # type: Optional[CharmBase]  # externally managed
         self._user_set = False
         self._clobberer = clobberer
@@ -488,8 +477,7 @@ class StatusPool(Object):
         self._load_from_stored_state()
         if self.AUTO_COMMIT:
             charm.framework.observe(
-                charm.framework.on.commit,  # type: ignore
-                self._on_framework_commit
+                charm.framework.on.commit, self._on_framework_commit  # type: ignore
             )
 
     def get_status(self, attr: str) -> Status:
