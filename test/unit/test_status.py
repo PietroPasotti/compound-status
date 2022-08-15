@@ -159,7 +159,7 @@ def test_status_priority_auto(charm):
     assert charm.status.workload.priority == 1
     assert charm.status.relation_1.priority == 2
     assert charm.status.relation_2.priority == 3
-    assert charm.status.master.priority is None
+    assert charm.status.master.priority is 0
 
 
 def test_status_priority_manual(charm):

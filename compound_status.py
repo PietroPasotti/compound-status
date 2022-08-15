@@ -29,14 +29,12 @@ StatusName = Literal["blocked", "waiting", "maintenance", "unknown", "active"]
 STATUSES = ("unknown", "active", "maintenance", "waiting", "blocked")
 STATUS_PRIORITIES: Dict[str, int] = {val: i for i, val in enumerate(STATUSES)}
 
-PositiveNumber = Union[float, int]
-
 
 class _StatusDict(TypedDict, total=False):
     type: Literal["subordinate", "master"]  # noqa
     status: StatusName
     message: str
-    priority: PositiveNumber
+    priority: float
     tag: str
     attr: str
     user_set: bool
@@ -50,9 +48,7 @@ class Status:
     def __repr__(self):
         return "<Status {} ({}): {}>".format(self._status, self.tag, self._message)
 
-    def __init__(
-        self, tag: Optional[str] = None, priority: Optional[PositiveNumber] = None
-    ):
+    def __init__(self, tag: Optional[str] = None, priority: float = 0):
         # to keep track of instantiation order
         self._id = Status._ID
         Status._ID += 1
@@ -68,15 +64,10 @@ class Status:
         self._logger = None  # type: Optional[logging.Logger]
         self._attr = None  # type: Optional[str]
 
-        if priority is not None:
-            if not isinstance(priority, (float, int)):
-                raise TypeError(f"priority needs to be float|int, not {type(priority)}")
-            if priority <= 0:
-                raise TypeError(f"priority needs to be > 0, not {priority}")
+        if not isinstance(priority, (float, int)):
+            raise TypeError(f"priority needs to be float|int, not {type(priority)}")
 
-        self._priority = (
-            priority
-        )  # type: Optional[PositiveNumber]  # externally managed
+        self._priority = priority  # type: float  # externally managed
 
     @property
     def priority(self):
@@ -169,8 +160,6 @@ class Status:
         assert attr, attr  # type guard
         tag = self.tag
         assert tag, tag  # type guard
-        priority = self.priority
-        assert priority, priority  # type guard
 
         dct: _StatusDict = {
             "type": "subordinate",
@@ -178,7 +167,7 @@ class Status:
             "message": self._message,
             "tag": tag,
             "attr": attr,
-            "priority": priority,
+            "priority": self.priority,
         }
         return dct
 
@@ -332,9 +321,8 @@ class MasterStatus(Status):
         self,
         tag: str = "master",
         clobberer: Clobberer = WorstOnly(),
-        priority: Optional[PositiveNumber] = None,
     ):
-        super().__init__(tag, priority=priority)
+        super().__init__(tag)
         self.children = set()  # type: Set[Status]  # gets populated by CompoundStatus
         self._owner = None  # type: Optional[CharmBase]  # externally managed
         self._user_set = False
