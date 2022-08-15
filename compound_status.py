@@ -6,7 +6,7 @@ from typing import Callable, Dict, List, Literal, Optional, Tuple, TypedDict
 
 from ops.charm import CharmBase
 from ops.framework import Handle, Object, StoredStateData
-from ops.model import StatusBase, UnknownStatus
+from ops.model import StatusBase, UnknownStatus, WaitingStatus
 from ops.storage import NoSnapshotError
 
 log = getLogger("compound-status")
@@ -358,6 +358,9 @@ class StatusPool(Object):
             return UnknownStatus()
 
         worst_status = sorted(self._pool.values(), key=_priority_key)[0]
+        if worst_status.get_name() == "unknown":
+            return WaitingStatus("no status set yet")
+
         return StatusBase.from_name(
             worst_status.get_name(),
             self._summarizer_func(
