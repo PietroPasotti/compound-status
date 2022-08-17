@@ -215,7 +215,9 @@ class Status:
     def __hash__(self):
         return hash((self.tag, self.status, self.message))
 
-    def __eq__(self, other: "Status") -> bool:
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Status):
+            return False
         return hash(self) == hash(other)
 
 
@@ -477,7 +479,7 @@ class StatusPool(Object):
             StoredStateData, self, StoredStateData.handle_kind
         )
         try:
-            self._state = charm.framework.load_snapshot(stored_handle)
+            self._state: StoredStateData = charm.framework.load_snapshot(stored_handle)
         except NoSnapshotError:
             self._state = StoredStateData(self, "_status_pool_state")
             self._state["statuses"] = "{}"
@@ -486,7 +488,8 @@ class StatusPool(Object):
         self._load_from_stored_state()
         if self.AUTO_COMMIT:
             charm.framework.observe(
-                charm.framework.on.commit, self._on_framework_commit  # type: ignore
+                charm.framework.on.commit,  # pyright: ignore[reportGeneralTypeIssues]
+                self._on_framework_commit,
             )
 
     def get_status(self, attr: str) -> Status:
@@ -597,9 +600,9 @@ class StatusPool(Object):
                     status = getattr(self, attr)
                 else:  # status was dynamically added
                     status = Status()
-                    attr = status_dct.get("attr", None)
-                    assert attr is not None, status_dct  # type guard
-                    self.add_status(status, attr)
+                    attribute = status_dct.get("attr", None)
+                    assert attribute is not None, status_dct  # type guard
+                    self.add_status(status, attribute)
 
             status._restore(status_dct)  # noqa
 
@@ -640,7 +643,9 @@ class StatusPool(Object):
             self._charm.unit.status = self.master.coalesce()
             self._store()
 
-        self._charm.framework.save_snapshot(self._state)  # type: ignore
+        self._charm.framework.save_snapshot(
+            self._state  # pyright: ignore[reportGeneralTypeIssues]
+        )
         self._charm.framework._storage.commit()  # noqa
 
     def unset(self):
