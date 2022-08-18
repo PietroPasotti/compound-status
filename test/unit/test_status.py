@@ -1,7 +1,9 @@
+import json
+
 import pytest
 import yaml
 from ops.charm import CharmBase
-from ops.framework import Handle
+from ops.framework import Handle, StoredStateData
 from ops.model import (
     UnknownStatus,
     ActiveStatus,
@@ -11,7 +13,7 @@ from ops.model import (
 )
 from ops.testing import Harness
 
-from compound_status import StatusPool, Status, MasterStatus, WorstOnly, \
+from compound_status import StatusPool, Status, WorstOnly, \
     Summary, Condensed
 from harnessctx import HarnessCtx
 
@@ -54,7 +56,7 @@ def charm(harness):
 
 
 def test_statuses_collection(charm):
-    assert len(charm.status.master.children) == 3
+    assert len(charm.status._statuses) == 3
 
 
 def test_statuses_setting(charm):
@@ -94,7 +96,7 @@ def test_statuses_setting_magic(charm):
          '(baz) meow'),
 ))
 def test_worst_only_clobber(statuses, expected_message):
-    clb = WorstOnly().clobber(statuses)
+    clb = WorstOnly().message(statuses)
     assert clb == expected_message
 
 
@@ -113,7 +115,7 @@ def test_worst_only_clobber(statuses, expected_message):
          '1 blocked; 1 waiting; 1 active'),
 ))
 def test_condensed_clobber(statuses, expected_message):
-    clb = Condensed().clobber(statuses)
+    clb = Condensed().message(statuses)
     assert clb == expected_message
 
 
@@ -132,7 +134,7 @@ def test_condensed_clobber(statuses, expected_message):
          '(baz:blocked) meow; (bar:waiting) ; (foo:active) '),
 ))
 def test_summary_clobber(statuses, expected_message):
-    clb = Summary().clobber(statuses)
+    clb = Summary().message(statuses)
     assert clb == expected_message
 
 
@@ -156,10 +158,9 @@ def test_status_sorting(statuses, expected_order):
 
 
 def test_status_priority_auto(charm):
-    assert charm.status.workload.priority == 1
-    assert charm.status.relation_1.priority == 2
-    assert charm.status.relation_2.priority == 3
-    assert charm.status.master.priority is None
+    assert charm.status.workload.priority == 0
+    assert charm.status.relation_1.priority == 0
+    assert charm.status.relation_2.priority == 0
 
 
 def test_status_priority_manual(charm):
@@ -183,72 +184,62 @@ def test_status_priority_manual(charm):
     charm = harness.charm
 
     assert charm.status.workload.priority == 12
-    assert Status.sort(charm.status.master.children) == [
+    assert Status.sort(charm.status._statuses.values()) == [
         charm.status.relation_1,
         charm.status.relation_2,
         charm.status.workload,
     ]
 
-
-def test_statuses_master_override(charm):
-    charm.status.relation_1 = ActiveStatus("foo")
-    charm.status.relation_2 = WaitingStatus("bar")
-    charm.status.master = ActiveStatus("overruled!")
-    charm.status.commit()
-
-    assert charm.status.master.status == charm.unit.status.name == "active"
-    assert charm.status.master.message == charm.unit.status.message == "overruled!"
-
-
 def test_hold(charm):
-    charm.status.master = ActiveStatus("1")
-    charm.status.commit()
+    assert charm.unit.status.name == 'unknown'
+    assert charm.unit.status.message == ''
 
     charm.status.relation_1 = ActiveStatus("foo")
-    assert charm.status.master.status == charm.unit.status.name == "active"
-    assert charm.status.master.message == charm.unit.status.message == "1"
+    status = charm.status.commit()
+
+    assert status.name == charm.unit.status.name == "active"
+    assert status.message == charm.unit.status.message == "(relation_1) foo"
+
     charm.status.relation_2 = WaitingStatus("bar")
-    assert charm.status.master.status == charm.unit.status.name == "active"
-    assert charm.status.master.message == charm.unit.status.message == "1"
-    charm.status.master = ActiveStatus("2")
-    assert charm.status.master.status == charm.unit.status.name == "active"
-    assert charm.unit.status.message == "1"
-    assert charm.status.master.message == "2"
+
+    assert status.name == charm.unit.status.name == "active"
+    assert status.message == charm.unit.status.message == "(relation_1) foo"
+
+    status = charm.status.coalesce()
+    assert status.name == "waiting"
+    assert status.message == "(rel2) bar"
+
+    assert charm.unit.status.name == "active"
+    assert charm.unit.status.message == "(relation_1) foo"
 
     charm.status.commit()
 
-    assert charm.status.master.status == charm.unit.status.name == "active"
-    assert charm.status.master.message == charm.unit.status.message == "2"
+    assert status.name == charm.unit.status.name == "waiting"
+    assert status.message == charm.unit.status.message == "(rel2) bar"
 
 
 def test_hold_no_sync(charm):
-    charm.status.master = ActiveStatus("1")
     charm.status.relation_1 = ActiveStatus("foo")
-    charm.status.commit()
+    status = charm.status.commit()
 
-    assert charm.status.master.status == charm.unit.status.name == "active"
-    assert charm.status.master.message == charm.unit.status.message == "1"
+    assert status.name == charm.unit.status.name == "active"
+    assert status.message == charm.unit.status.message == "(relation_1) foo"
+
+    # now we start touching stuff
     charm.status.relation_2 = WaitingStatus("bar")
-    assert charm.status.master.status == charm.unit.status.name == "active"
-    assert charm.status.master.message == charm.unit.status.message == "1"
-    charm.status.master = ActiveStatus("2")
-    # now the master status does change!
-    assert charm.status.master.status == "active"
-    assert charm.status.master.message == "2"
-    # but not the unit status.
-    assert charm.unit.status.name == "active"
-    assert charm.unit.status.message == "1"
+    status = charm.status.coalesce()
 
-    # we didn't sync, so everything is as before, still
-    assert charm.status.master.status == charm.unit.status.name == "active"
-    assert charm.status.master.message == "2"
-    assert charm.unit.status.message == "1"
+    # desync
+    assert status.name == 'waiting'
+    assert status.message == '(rel2) bar'
+    assert charm.unit.status.name == "active"
+    assert charm.unit.status.message == "(relation_1) foo"
 
     charm.status.commit()
 
     # now all is nice and sync.
-    assert charm.status.master.status == charm.unit.status.name == "active"
-    assert charm.status.master.message == charm.unit.status.message == "2"
+    assert status.name == charm.unit.status.name == "waiting"
+    assert status.message == charm.unit.status.message == "(rel2) bar"
 
 
 def test_stored_blank(charm):
@@ -257,27 +248,40 @@ def test_stored_blank(charm):
     other_harness = Harness(type(charm))
     other_harness.begin()
     restored_charm = other_harness.charm
-    assert restored_charm.status.master.status == "unknown"
+    assert restored_charm.status.coalesce().name == "unknown"
     assert restored_charm.unit.status.name == "maintenance"
     assert restored_charm.unit.status.message == ""
+
+
+def carry_over_stored(old_framework, new_framework, obj, kind, key):
+    """Utility to copy over stored data between framework instances."""
+    h = Handle(obj, kind, key)
+    data = old_framework._objects.pop(h.path)
+    new_framework._storage.save_snapshot(h.path, data._cache)
 
 
 def test_stored(charm):
     charm.status.relation_1 = BlockedStatus("foo")
     charm.status.commit()
+    charm.framework.commit()
 
     other_harness = Harness(type(charm))
+    carry_over_stored(charm.framework, other_harness.framework,
+                      charm.status, 'StoredStateData', '_state')
+
     other_harness.begin()
-    restored_charm = other_harness.charm
-    assert restored_charm.status.master.status == "blocked"
 
-    # we have reinited the charm, so harness has set it to 'maintenance'
-    # a real live charm would remain blocked.
-    # assert restored_charm.unit.status.name == 'blocked'
-    assert restored_charm.status.master.message == "(relation_1) foo"
+    other_charm = other_harness.charm
+    statuses = json.loads(other_charm.status._state.statuses)
 
-    # we have reinited the charm, so harness has set it to ''
-    # assert restored_charm.unit.status.message == "foo"
+    assert statuses
+    assert statuses['relation_1'] == \
+           charm.status.relation_1._snapshot() == \
+           other_charm.status.relation_1._snapshot()
+
+    status = other_charm.status.coalesce()
+    assert status.name == "blocked"
+    assert status.message == "(relation_1) foo"
 
 
 def test_auto_commit(charm_type):
@@ -288,7 +292,7 @@ def test_auto_commit(charm_type):
         charm.status.relation_1 = ActiveStatus("boop")
 
     assert charm.unit.status.name == "active"
-    assert charm.unit.status.message == charm.status.master._clobber_statuses(
+    assert charm.unit.status.message == charm.status._facade.message(
         (charm.status.relation_1, charm.status.relation_2)
     )
 
@@ -308,7 +312,7 @@ def test_auto_commit_off(charm_type):
     charm.status.commit()
 
     assert charm.unit.status.name == "active"
-    assert charm.unit.status.message == charm.status.master._clobber_statuses(
+    assert charm.unit.status.message == charm.status._facade.message(
         (charm.status.relation_1, charm.status.relation_2)
     )
 
@@ -361,24 +365,19 @@ def test_dynamic_pool():
     assert pool.bar.status == 'active'
     assert pool.bar.message == 'bar'
 
-    master = pool.master
-    assert len(master.children) == 2
+    statuses = pool._statuses
+    assert len(statuses) == 2
     pool.add_status(Status(tag='woo')._set('blocked', 'meow'))
-    assert len(master.children) == 3
-
-    with pytest.raises(ValueError):
-        # already added a status with the same tag
-        pool.add_status(Status(tag='woo'))
+    assert len(statuses) == 3
 
     # this will work
     woo = Status(tag='woo')
     pool.add_status(woo, attr='wooz')
-    assert len(master.children) == 4
+    assert len(statuses) == 4
     pool.remove_status(woo)
-    assert len(master.children) == 3
-    assert woo._master is None
+    assert len(statuses) == 3
     assert woo._logger is None
-    assert woo not in master.children
+    assert woo not in statuses
 
 
 def test_dynamic_pool_persistence():
@@ -401,10 +400,7 @@ def test_dynamic_pool_persistence():
     pool.commit()
 
     h2 = Harness(MyCharm)
-    # copy over the storage
-    h2._storage = h._storage
-    h2.framework._storage = h._storage
-
+    carry_over_stored(h.framework, h2.framework, pool, 'StoredStateData', '_state')
     h2.begin()
     assert h2.charm.status.foo == foo
 
@@ -419,7 +415,6 @@ def test_recursive_pool():
 
     class CharmStatus(StatusPool):
         SKIP_UNKNOWN = True
-        master = MasterStatus(clobberer=Summary())
         relation_1 = Status()
 
     class MyCharm(CharmBase):
@@ -427,14 +422,13 @@ def test_recursive_pool():
 
         def __init__(self, framework, key=None):
             super().__init__(framework, key)
-            self.status = CharmStatus(self)
+            self.status = CharmStatus(self, facade=Summary())
 
         def update_relation_1_status(self, statuses: dict):
             class RelationStatus(StatusPool):
                 KEY = "relation_1"
-                master = MasterStatus(tag='relation_1', clobberer=Summary())
 
-            relation_status = RelationStatus(self)
+            relation_status = RelationStatus(self, facade=Summary())
 
             for relation in self.model.relations['relation_1']:
                 tag = relation.app.name.replace('-', '_')
@@ -443,7 +437,7 @@ def test_recursive_pool():
             for key, value in statuses.items():
                 setattr(relation_status, key, value)
 
-            self.status.relation_1 = relation_status.master.coalesce()
+            self.status.relation_1 = relation_status.coalesce()
 
     h = Harness(MyCharm, meta=yaml.safe_dump(
         {"requires": {"relation_1": {"interface": "foo"}}}))
@@ -467,4 +461,8 @@ def test_recursive_pool():
 
     charm.status.commit()
     assert charm.unit.status.name == 'blocked'
-    assert charm.unit.status.message == '(relation_1:blocked) (remote_app_3:blocked) this relation is BORK; (remote_app_2:waiting) this relation is waiting; (remote_app_1:active) this relation is OK'
+    assert charm.unit.status.message == \
+           '(relation_1:blocked) ' \
+           '(remote_app_3:blocked) this relation is BORK; ' \
+           '(remote_app_2:waiting) this relation is waiting; ' \
+           '(remote_app_1:active) this relation is OK'
