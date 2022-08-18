@@ -1,7 +1,9 @@
+import json
+
 import pytest
 import yaml
 from ops.charm import CharmBase
-from ops.framework import Handle
+from ops.framework import Handle, StoredStateData
 from ops.model import (
     UnknownStatus,
     ActiveStatus,
@@ -251,22 +253,35 @@ def test_stored_blank(charm):
     assert restored_charm.unit.status.message == ""
 
 
+def carry_over_stored(old_framework, new_framework, obj, kind, key):
+    """Utility to copy over stored data between framework instances."""
+    h = Handle(obj, kind, key)
+    data = old_framework._objects.pop(h.path)
+    new_framework._storage.save_snapshot(h.path, data._cache)
+
+
 def test_stored(charm):
     charm.status.relation_1 = BlockedStatus("foo")
     charm.status.commit()
+    charm.framework.commit()
 
     other_harness = Harness(type(charm))
+    carry_over_stored(charm.framework, other_harness.framework,
+                      charm.status, 'StoredStateData', '_state')
+
     other_harness.begin()
-    restored_charm = other_harness.charm
-    assert restored_charm.status.coalesce().name == "blocked"
 
-    # we have reinited the charm, so harness has set it to 'maintenance'
-    # a real live charm would remain blocked.
-    # assert restored_charm.unit.status.name == 'blocked'
-    assert restored_charm.status.coalesce().message == "(relation_1) foo"
+    other_charm = other_harness.charm
+    statuses = json.loads(other_charm.status._state.statuses)
 
-    # we have reinited the charm, so harness has set it to ''
-    # assert restored_charm.unit.status.message == "foo"
+    assert statuses
+    assert statuses['relation_1'] == \
+           charm.status.relation_1._snapshot() == \
+           other_charm.status.relation_1._snapshot()
+
+    status = other_charm.status.coalesce()
+    assert status.name == "blocked"
+    assert status.message == "(relation_1) foo"
 
 
 def test_auto_commit(charm_type):
@@ -385,10 +400,7 @@ def test_dynamic_pool_persistence():
     pool.commit()
 
     h2 = Harness(MyCharm)
-    # copy over the storage
-    h2._storage = h._storage
-    h2.framework._storage = h._storage
-
+    carry_over_stored(h.framework, h2.framework, pool, 'StoredStateData', '_state')
     h2.begin()
     assert h2.charm.status.foo == foo
 

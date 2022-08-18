@@ -7,7 +7,8 @@ from logging import getLogger
 from typing import TYPE_CHECKING, Dict, Iterable, Literal, Optional, TypedDict, Union
 
 from ops.charm import CharmBase
-from ops.framework import Handle, Object, StoredStateData
+from ops.framework import Handle, Object, StoredStateData, StoredState, \
+    BoundStoredState
 from ops.model import StatusBase
 from ops.storage import NoSnapshotError
 
@@ -313,9 +314,10 @@ class StatusPool(Object):
         _statuses = {}  # type: Dict[str, Status]
         _charm: CharmBase
         _facade: Facade
-        _state: StoredStateData
         _logger: logging.Logger
         _priority_counter = 0  # type: int
+
+    _state = StoredState()
 
     def __init__(
         self,
@@ -333,17 +335,7 @@ class StatusPool(Object):
         self.__dict__["_priority_counter"] = 0
         self.__dict__["_charm"] = charm
 
-        stored_handle = Handle(self, StoredStateData.handle_kind, "_status_pool_state")
-        charm.framework.register_type(
-            StoredStateData, self, StoredStateData.handle_kind
-        )
-        try:
-            state = charm.framework.load_snapshot(stored_handle)
-        except NoSnapshotError:
-            state = StoredStateData(self, "_status_pool_state")
-            state["statuses"] = "{}"
-        self.__dict__["_state"] = state
-
+        self._state.set_default(statuses="{}")
         self._init_statuses(charm)
         self._load_from_stored_state()
         if self.AUTO_COMMIT:
@@ -420,7 +412,7 @@ class StatusPool(Object):
 
     def _load_from_stored_state(self):
         """Retrieve stored state snapshot of current statuses."""
-        statuses_raw = typing.cast(str, self._state["statuses"])
+        statuses_raw = typing.cast(str, self._state.statuses)
         stored_statuses = typing.cast(Dict[str, _StatusDict], json.loads(statuses_raw))
         for attr, status_dct in stored_statuses.items():
             if hasattr(self, attr):  # status was statically defined
@@ -436,7 +428,7 @@ class StatusPool(Object):
     def _store(self):
         """Dump stored state."""
         statuses = {s._attr: s._snapshot() for s in self._statuses.values()}
-        self._state["statuses"] = json.dumps(statuses)
+        self._state.statuses = json.dumps(statuses)
 
     def __setattr__(self, key: str, value: StatusBase):
         if isinstance(value, StatusBase):
@@ -468,9 +460,6 @@ class StatusPool(Object):
         else:
             self._charm.unit.status = coalesced
             self._store()
-
-        self._charm.framework.save_snapshot(self._state)  # type: ignore
-        self._charm.framework._storage.commit()  # noqa
         return coalesced
 
     def coalesce(self) -> StatusBase:
