@@ -364,7 +364,9 @@ class StatusPool(Object):
 
         If attr is not provided, status.tag will be used instead if set.
 
-        NB `attr` needs to be a valid Python identifier.
+        NB if `attr` is a valid Python identifier, you can
+        do `getattr(pool, attr)` to reference the Status object,
+        otherwise you can't.
         """
         tag = status.tag
         if not attr and not tag:
@@ -374,13 +376,6 @@ class StatusPool(Object):
 
         # pyright ain't to bright with inline conditionals
         attribute: str = typing.cast(str, attr or tag)
-
-        if not attribute.isidentifier():
-            raise ValueError(
-                f"cannot set {attribute!r}={status} on {self}: "
-                f"attribute needs to be a valid Python identifier."
-            )
-
         # will check that attribute is not in use already
         self._add_status(status, attribute)
 
