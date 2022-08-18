@@ -313,7 +313,6 @@ class StatusPool(Object):
         _charm: CharmBase
         _facade: Facade
         _logger: logging.Logger
-        _priority_counter = 0  # type: int
 
     _state = StoredState()
 
@@ -330,7 +329,6 @@ class StatusPool(Object):
         self.__dict__["_statuses"] = {}
         self.__dict__["_facade"] = facade
         self.__dict__["_logger"] = log.getChild(_key)
-        self.__dict__["_priority_counter"] = 0
         self.__dict__["_charm"] = charm
 
         self._state.set_default(statuses="{}")  # type:ignore
