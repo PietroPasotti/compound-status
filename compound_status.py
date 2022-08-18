@@ -333,7 +333,7 @@ class StatusPool(Object):
         self.__dict__["_priority_counter"] = 0
         self.__dict__["_charm"] = charm
 
-        self._state.set_default(statuses="{}")
+        self._state.set_default(statuses="{}")  # type:ignore
         self._init_statuses(charm)
         self._load_from_stored_state()
         if self.AUTO_COMMIT:
@@ -410,7 +410,7 @@ class StatusPool(Object):
 
     def _load_from_stored_state(self):
         """Retrieve stored state snapshot of current statuses."""
-        statuses_raw = typing.cast(str, self._state.statuses)
+        statuses_raw = typing.cast(str, self._state.statuses)  # type:ignore
         stored_statuses = typing.cast(Dict[str, _StatusDict], json.loads(statuses_raw))
         for attr, status_dct in stored_statuses.items():
             if hasattr(self, attr):  # status was statically defined
@@ -426,7 +426,7 @@ class StatusPool(Object):
     def _store(self):
         """Dump stored state."""
         statuses = {s._attr: s._snapshot() for s in self._statuses.values()}
-        self._state.statuses = json.dumps(statuses)
+        self._state.statuses = json.dumps(statuses)  # type:ignore
 
     def __setattr__(self, key: str, value: StatusBase):
         if isinstance(value, StatusBase):
