@@ -3,19 +3,8 @@ import json
 import logging
 import typing
 from collections import Counter
-from itertools import chain
 from logging import getLogger
-from operator import itemgetter
-from typing import (
-    TYPE_CHECKING,
-    Dict,
-    Iterable,
-    Literal,
-    Optional,
-    Set,
-    TypedDict,
-    Union,
-)
+from typing import TYPE_CHECKING, Dict, Iterable, Literal, Optional, TypedDict, Union
 
 from ops.charm import CharmBase
 from ops.framework import Handle, Object, StoredStateData
@@ -31,7 +20,6 @@ STATUS_PRIORITIES: Dict[str, int] = {val: i for i, val in enumerate(STATUSES)}
 
 
 class _StatusDict(TypedDict, total=False):
-    type: Literal["subordinate", "master"]  # noqa
     status: StatusName
     message: str
     priority: float
@@ -60,7 +48,6 @@ class Status:
         self._message = ""
 
         # externally managed (and henceforth immutable) state
-        self._master = None  # type: Optional[MasterStatus]
         self._logger = None  # type: Optional[logging.Logger]
         self._attr = None  # type: Optional[str]
 
@@ -124,7 +111,7 @@ class Status:
         """Unsets status and message.
 
         This status will go back to its initial state and be removed from the
-        Master clobber.
+        toplevel clobber.
         """
         self.debug("unset")
         self._status = "unknown"
@@ -162,7 +149,6 @@ class Status:
         assert tag, tag  # type guard
 
         dct: _StatusDict = {
-            "type": "subordinate",
             "status": self._status,
             "message": self._message,
             "tag": tag,
@@ -173,10 +159,6 @@ class Status:
 
     def _restore(self, dct: _StatusDict):
         """Restore Status from stored state."""
-        type_ = dct.get("type")
-        assert type_, type_
-        assert type_ == "subordinate", type_
-
         status = dct.get("status")
         message = dct.get("message")
         priority = dct.get("priority")
@@ -202,37 +184,55 @@ class Status:
         return hash(self) == hash(other)
 
 
-class Clobberer:
-    """Clobberer. Repeat it many times fast."""
+class Facade:
+    """Toplevel presentation of a group of Status objects."""
 
-    def clobber(self, statuses: Iterable[Status], skip_unknown: bool = False) -> str:
-        """Produce a clobbered representation of the statuses."""
+    def worst(self, statuses: Iterable[Status]) -> Status:
+        """Return worst status."""
+        return Status.sort(statuses)[0]
+
+    def status(
+        self, statuses: Iterable[Status], skip_unknown: bool = False
+    ) -> StatusName:
+        """Status Name resulting from this facade."""
+        return self.worst(statuses).status
+
+    def message(self, statuses: Iterable[Status], skip_unknown: bool = False) -> str:
+        """Clobber the status messages."""
         raise NotImplementedError
 
+    def coalesce(
+        self, statuses: Iterable[Status], skip_unknown: bool = False
+    ) -> StatusBase:
+        """Coalesce a group of Statuses into a single StatusBase instance."""
+        return StatusBase.from_name(
+            self.status(statuses), self.message(statuses, skip_unknown)
+        )
 
-class WorstOnly(Clobberer):
-    """This clobberer provides a worst-only view of the current statuses in the pool.
+
+class WorstOnly(Facade):
+    """This facade provides a worst-only view of the current statuses in the pool.
 
     e.g. if the status pool has three statuses:
         relation_1 = ActiveStatus('✅')
         relation_2 = WaitingStatus('𝌗: foo')
         workload = BlockedStatus('💔')
 
-    The Summary clobbered status will have as message::
+    The Summary clobbered status will be:
         (workload) 💔
     """
 
     def __init__(self, fmt: str = "({0}) {1}", sep: str = "; "):
         self._fmt = fmt
 
-    def clobber(self, statuses: Iterable[Status], skip_unknown: bool = False) -> str:
+    def message(self, statuses: Iterable[Status], skip_unknown: bool = False) -> str:
         """Produce a clobbered representation of the statuses."""
-        worst = Status.sort(statuses)[0]
+        worst = self.worst(statuses)
         return self._fmt.format(worst.tag, worst.message)
 
 
-class Summary(Clobberer):
-    """This clobberer provides a worst-first, summarized view of all statuses.
+class Summary(Facade):
+    """This facade provides a worst-first, summarized view of all statuses.
 
     e.g. if the status pool has three statuses:
         relation_1 = ActiveStatus('✅')
@@ -247,7 +247,7 @@ class Summary(Clobberer):
         self._fmt = fmt
         self._sep = sep
 
-    def clobber(self, statuses: Iterable[Status], skip_unknown: bool = False):
+    def message(self, statuses: Iterable[Status], skip_unknown: bool = False):
         """Produce a clobbered representation of the statuses."""
         msgs = []
         for status in Status.sort(statuses):
@@ -257,8 +257,8 @@ class Summary(Clobberer):
         return self._sep.join(msgs)
 
 
-class Condensed(Clobberer):
-    """This clobberer provides a very compact, summarized view of all statuses.
+class Condensed(Facade):
+    """This facade provides a very compact, summarized view of all statuses.
 
     e.g. if the status pool has three statuses:
         relation_1 = ActiveStatus('✅')
@@ -280,7 +280,7 @@ class Condensed(Clobberer):
         self._fmt = fmt
         self._sep = sep
 
-    def clobber(self, statuses: Iterable[Status], skip_unknown: bool = False):
+    def message(self, statuses: Iterable[Status], skip_unknown: bool = False):
         """Produce a clobbered representation of the statuses."""
         ctr = Counter(s.status for s in statuses)
 
@@ -299,135 +299,6 @@ class Condensed(Clobberer):
         return self._sep.join(msgs)
 
 
-class MasterStatus(Status):
-    """The Master status of the pool.
-
-    Parameters:
-        - `tag`: the name to associate the master status with.
-
-        - `fmt`: The format for each child status. Needs to contain three {}
-            slots, will receive three arguments in this order:
-
-            - the tag of the child status (a string)
-            - the name of the child status (e.g. 'blocked', or 'active')
-            - the message associated with the child status (another string)
-
-        - `sep`: The separator used to join together the child statuses.
-    """
-
-    SKIP_UNKNOWN = False
-
-    def __init__(
-        self,
-        tag: str = "master",
-        clobberer: Clobberer = WorstOnly(),
-    ):
-        super().__init__(tag)
-        self.children = set()  # type: Set[Status]  # gets populated by CompoundStatus
-        self._owner = None  # type: Optional[CharmBase]  # externally managed
-        self._user_set = False
-        self._clobberer = clobberer
-
-        self._logger = log.getChild(tag)
-        self._master = self  # lucky you
-        self._attr = "*master*"
-
-    def _add_child(self, status: Status):
-        """Add a child status."""
-        status._master = self
-        logger = self._logger
-        assert logger  # type guard
-        tag = status.tag
-        assert tag  # type guard
-
-        status._logger = logger.getChild(tag)
-        self.children.add(status)
-
-    def _remove_child(self, status: Status):
-        """Remove a child status."""
-        if status not in self.children:
-            raise ValueError(f"{status} not in {self}")
-
-        status._master = None
-        status._logger = None
-        self.children.remove(status)
-
-    @property
-    def message(self) -> str:
-        """Return the message associated with this status."""
-        if self._user_set:
-            return self._message
-        return self._clobber_statuses(self.children, self.SKIP_UNKNOWN)
-
-    def _clobber_statuses(
-        self, statuses: Iterable[Status], skip_unknown: bool = False
-    ) -> str:
-        """Produce a message summarizing the child statuses."""
-        return self._clobberer.clobber(statuses, skip_unknown)
-
-    @property
-    def status(self) -> StatusName:
-        """Return the status."""
-        if self._user_set:
-            return self._status
-        return Status.sort(self.children)[0].status
-
-    def coalesce(self) -> StatusBase:
-        """Cast to an ops.model.StatusBase instance by clobbering statuses and messages."""
-        if self.status == "unknown":
-            raise ValueError("cannot coalesce unknown status")
-        ops_status = StatusBase.from_name(self.status, self.message)
-        return ops_status
-
-    def _set(self, status: StatusName, msg: str = ""):
-        """Force-set this status and message.
-
-        Should not be called by user code.
-        """
-        self._user_set = True
-        super()._set(status, msg)
-
-    def unset(self):
-        """Unset all child statuses, as well as any user_set Master status."""
-        super().unset()
-
-        self._user_set = False
-        for child in self.children:
-            child.unset()
-
-    def _snapshot(self) -> _StatusDict:
-        """Serialize Status for storage."""
-        dct = super()._snapshot()
-        dct["type"] = "master"
-        dct["user_set"] = self._user_set
-        return dct
-
-    def _restore(self, dct: _StatusDict):
-        """Restore Status from stored state."""
-        type_ = dct.get("type", None)
-        assert type_, type_  # type guard
-        assert type_ == "master", type_
-
-        status = dct.get("status", None)
-        message = dct.get("message", None)
-        user_set = dct.get("user_set", None)
-
-        assert status is not None, status
-        assert message is not None, message
-        assert user_set is not None, user_set
-
-        self._status = status
-        self._message = message
-        self._user_set = user_set
-
-    def __repr__(self):
-        if not self.children:
-            return "<MasterStatus -- empty>"
-        if self.status == "unknown":
-            return "unknown"
-        return str(self.coalesce())
-
-
 class StatusPool(Object):
     """Represents the pool of statuses available to an Object."""
 
@@ -441,25 +312,37 @@ class StatusPool(Object):
     if TYPE_CHECKING:
         _statuses = {}  # type: Dict[str, Status]
         _charm: CharmBase
-        master = MasterStatus()  # type: MasterStatus
+        _facade: Facade
+        _state: StoredStateData
+        _logger: logging.Logger
         _priority_counter = 0  # type: int
 
-    def __init__(self, charm: CharmBase, key: Optional[str] = None):
-        super().__init__(charm, key or self.KEY)
+    def __init__(
+        self,
+        charm: CharmBase,
+        key: Optional[str] = None,
+        facade: Facade = WorstOnly(),
+    ):
+        _key = key or self.KEY
+        super().__init__(charm, _key)
+
         # skip setattr
-        self.__dict__["master"] = MasterStatus()
         self.__dict__["_statuses"] = {}
+        self.__dict__["_facade"] = facade
+        self.__dict__["_logger"] = log.getChild(_key)
         self.__dict__["_priority_counter"] = 0
+        self.__dict__["_charm"] = charm
 
         stored_handle = Handle(self, StoredStateData.handle_kind, "_status_pool_state")
         charm.framework.register_type(
             StoredStateData, self, StoredStateData.handle_kind
         )
         try:
-            self._state = charm.framework.load_snapshot(stored_handle)
+            state = charm.framework.load_snapshot(stored_handle)
         except NoSnapshotError:
-            self._state = StoredStateData(self, "_status_pool_state")
-            self._state["statuses"] = "{}"
+            state = StoredStateData(self, "_status_pool_state")
+            state["statuses"] = "{}"
+        self.__dict__["_state"] = state
 
         self._init_statuses(charm)
         self._load_from_stored_state()
@@ -501,74 +384,63 @@ class StatusPool(Object):
         # will check that attribute is not in use already
         self._add_status(status, attribute)
 
-        setattr(self, attribute, status)
+    def __getattribute__(self, item):
+        try:
+            return super().__getattribute__(item)
+        except AttributeError:
+            pass
+
+        if item in self._statuses:
+            return self._statuses[item]
+
+        raise AttributeError(item)
 
     def remove_status(self, status: Status):
         """Remove the status and forget about it."""
         # some safety-first cleanup
         status.unset()
-        self.master._remove_child(status)  # noqa
         attr = status._attr  # noqa
         assert attr is not None, status
-        delattr(self, attr)
+        del self._statuses[attr]
+        status._logger = None
 
     def _add_status(self, status: Status, attr: str):
-        if not status.priority:
-            self._priority_counter += 1
-            status._priority = self._priority_counter
-
         status.tag = status.tag or attr
-        self.master._add_child(status)  # noqa
-
+        status._logger = self._logger.getChild(status.tag)
         status._attr = attr
         self._statuses[attr] = status
 
     def _init_statuses(self, charm: CharmBase):
-        """Extract the statuses from the class namespace.
-
-        And associate them with the master status.
-        """
+        """Extract the statuses from the class namespace."""
 
         def _is_child_status(obj):
-            return isinstance(obj, Status) and not isinstance(obj, MasterStatus)
+            return isinstance(obj, Status)
 
         statuses_ = inspect.getmembers(self, predicate=_is_child_status)
         statuses = sorted(statuses_, key=lambda s: s[1]._id)
 
-        master = self.master
-        # bind children to master, set tag if unset, init logger
+        # bind, set tag if unset, init logger
         for attr, obj in statuses:
             self._add_status(obj, attr)
-
-        master.SKIP_UNKNOWN = self.SKIP_UNKNOWN
-        master.children = set(a[1] for a in statuses)
-
-        # skip setattr
-        self.__dict__["_statuses"] = dict(statuses)
-        self.__dict__["_charm"] = charm
 
     def _load_from_stored_state(self):
         """Retrieve stored state snapshot of current statuses."""
         statuses_raw = typing.cast(str, self._state["statuses"])
         stored_statuses = typing.cast(Dict[str, _StatusDict], json.loads(statuses_raw))
         for attr, status_dct in stored_statuses.items():
-            if attr == "*master*":
-                status = self.master
-            else:
-                if hasattr(self, attr):  # status was statically defined
-                    status = getattr(self, attr)
-                else:  # status was dynamically added
-                    status = Status()
-                    attr = status_dct.get("attr", None)
-                    assert attr is not None, status_dct  # type guard
-                    self.add_status(status, attr)
+            if hasattr(self, attr):  # status was statically defined
+                status = getattr(self, attr)
+            else:  # status was dynamically added
+                status = Status()
+                attr = status_dct.get("attr", None)
+                assert attr is not None, status_dct  # type guard
+                self.add_status(status, attr)
 
             status._restore(status_dct)  # noqa
 
     def _store(self):
         """Dump stored state."""
-        all_statuses = chain(map(itemgetter(1), self._statuses.items()), (self.master,))
-        statuses = {s._attr: s._snapshot() for s in all_statuses}
+        statuses = {s._attr: s._snapshot() for s in self._statuses.values()}
         self._state["statuses"] = json.dumps(statuses)
 
     def __setattr__(self, key: str, value: StatusBase):
@@ -580,34 +452,44 @@ class StatusPool(Object):
                     f"which is an invalid status name. `value` should "
                     f"be an instance of a StatusBase subclass."
                 )
-
-            if key == "master":
-                return self.master._set(name, value.message)  # noqa
-            elif key in self._statuses:
-                return self._statuses[key]._set(name, value.message)  # noqa
+            if key in self._statuses:
+                self._statuses[key]._set(name, value.message)  # noqa
             else:
-                raise AttributeError(key)
+                status = Status(key)
+                self._add_status(status, key)
+                status._set(name, value.message)  # noqa
+            return
         return super().__setattr__(key, value)
 
     def _on_framework_commit(self, _event):
-        log.debug("master status auto-committed")
+        self._logger.debug("auto-committed")
         self.commit()
 
     def commit(self):
         """Store the current state and sync with juju."""
-        assert isinstance(self.master, MasterStatus), type(self.master)
-
-        # cannot coalesce in unknown status
-        if self.master.status != "unknown":
-            self._charm.unit.status = self.master.coalesce()
+        coalesced = self.coalesce()
+        if coalesced.name == "unknown":
+            self._logger.error('cannot coalesce: status is "unknown"')
+        else:
+            self._charm.unit.status = coalesced
             self._store()
 
         self._charm.framework.save_snapshot(self._state)  # type: ignore
         self._charm.framework._storage.commit()  # noqa
+        return coalesced
+
+    def coalesce(self) -> StatusBase:
+        """Cast to an ops.model.StatusBase instance by clobbering statuses and messages."""
+        return self._facade.coalesce(self._statuses.values(), self.SKIP_UNKNOWN)
 
     def unset(self):
-        """Unsets master status (and all children)."""
-        self.master.unset()
+        """Unsets all statuses."""
+        for child in self._statuses.values():
+            child.unset()
 
     def __repr__(self):
-        return repr(self.master)
+        if not self._statuses:
+            return "<StatusPool -- empty>"
+        if self.status == "unknown":
+            return "unknown"
+        return str(self.coalesce())

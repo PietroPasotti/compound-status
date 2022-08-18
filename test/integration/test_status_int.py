@@ -18,15 +18,6 @@ async def tester_charm(ops_test: OpsTest):
     return charm
 
 
-@pytest.mark.abort_on_fail
-async def test_deploy(tester_charm, ops_test: OpsTest):
-    await ops_test.model.deploy(tester_charm)
-    async with ops_test.fast_forward():
-        await ops_test.model.wait_for_idle(['tester'],
-                                           raise_on_error=False,
-                                           raise_on_blocked=False)
-
-
 def assert_status(ops_test, name, message=None, agent_status='idle'):
     unit = ops_test.model.units["tester/0"]
     assert unit.agent_status == agent_status
@@ -53,7 +44,6 @@ async def test_status_change(tester_charm, ops_test: OpsTest):
     await ops_test.model.applications.get("tester").set_config(
         {"status": "waiting", "message": "for godot"}
     )
-
     # cause update-status to fire a couple of times
     async with ops_test.fast_forward():
         await asyncio.sleep(10)
