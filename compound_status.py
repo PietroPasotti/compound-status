@@ -7,10 +7,8 @@ from logging import getLogger
 from typing import TYPE_CHECKING, Dict, Iterable, Literal, Optional, TypedDict, Union
 
 from ops.charm import CharmBase
-from ops.framework import Handle, Object, StoredStateData, StoredState, \
-    BoundStoredState
+from ops.framework import Object, StoredState
 from ops.model import StatusBase
-from ops.storage import NoSnapshotError
 
 log = getLogger("compound-status")
 
