@@ -196,7 +196,9 @@ class Facade:
         """Return worst status."""
         return Status.sort(statuses)[0]
 
-    def status(self, statuses: Iterable[Status], skip_unknown: bool = False) -> StatusName:
+    def status(
+        self, statuses: Iterable[Status], skip_unknown: bool = False
+    ) -> StatusName:
         """Status Name resulting from this facade."""
         return self.worst(statuses).status
 
@@ -204,9 +206,13 @@ class Facade:
         """Clobber the status messages."""
         raise NotImplementedError
 
-    def coalesce(self, statuses: Iterable[Status], skip_unknown: bool = False) -> StatusBase:
+    def coalesce(
+        self, statuses: Iterable[Status], skip_unknown: bool = False
+    ) -> StatusBase:
         """Coalesce a group of Statuses into a single StatusBase instance."""
-        return StatusBase.from_name(self.status(statuses), self.message(statuses, skip_unknown))
+        return StatusBase.from_name(
+            self.status(statuses), self.message(statuses, skip_unknown)
+        )
 
 
 class WorstOnly(Facade):
@@ -473,4 +479,6 @@ class StatusPool(Object):
     def __repr__(self):
         if not self._statuses:
             return "<StatusPool -- empty>"
+        if self.status == "unknown":
+            return "unknown"
         return str(self.coalesce())
