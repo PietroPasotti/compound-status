@@ -13,8 +13,7 @@ from ops.model import (
 )
 from ops.testing import Harness
 
-from compound_status import StatusPool, Status, WorstOnly, \
-    Summary, Condensed
+from compound_status import StatusPool, Status, WorstOnly, Summary, Condensed
 from harnessctx import HarnessCtx
 
 
@@ -43,8 +42,7 @@ def harness(charm_type):
 
     # reset the stored status state, else we might pollute the tests with reloads
     # status_handle = Handle('MyCharm', 'CharmStatus', 'compound_status')
-    harness._storage.drop_snapshot(
-        "MyCharm/CharmStatus[compound_status]")
+    harness._storage.drop_snapshot("MyCharm/CharmStatus[compound_status]")
 
     harness.begin_with_initial_hooks()
     return harness
@@ -81,77 +79,149 @@ def test_statuses_setting_magic(charm):
     assert charm.unit.status.message == "(relation_1) foo"
 
 
-@pytest.mark.parametrize("statuses, expected_message", (
-        ((Status('foo', 1)._set('active', 'argh'),
-          Status('bar', 2)._set('active'),
-          Status('baz', 3)._set('active')),
-         '(foo) argh'),
-        ((Status('foo', 1)._set('active'),
-          Status('bar', 2)._set('blocked', 'wof'),
-          Status('baz', 3)._set('active')),
-         '(bar) wof'),
-        ((Status('foo', 1)._set('active'),
-          Status('bar', 2)._set('waiting'),
-          Status('baz', 3)._set('blocked', 'meow')),
-         '(baz) meow'),
-))
+def test_statuses_setting_magic_keep_equality(charm):
+    assert charm.unit.status.name == "unknown"
+    assert charm.unit.status.message == ""
+
+    charm.status.relation_1 = ActiveStatus("foo")
+    charm.status.commit()
+
+    breakpoint()
+    assert charm.status.relation_1 == ActiveStatus("foo")
+    assert ActiveStatus("foo") == charm.status.relation_1
+
+
+@pytest.mark.parametrize(
+    "statuses, expected_message",
+    (
+        (
+            (
+                Status("foo", 1)._set("active", "argh"),
+                Status("bar", 2)._set("active"),
+                Status("baz", 3)._set("active"),
+            ),
+            "(foo) argh",
+        ),
+        (
+            (
+                Status("foo", 1)._set("active"),
+                Status("bar", 2)._set("blocked", "wof"),
+                Status("baz", 3)._set("active"),
+            ),
+            "(bar) wof",
+        ),
+        (
+            (
+                Status("foo", 1)._set("active"),
+                Status("bar", 2)._set("waiting"),
+                Status("baz", 3)._set("blocked", "meow"),
+            ),
+            "(baz) meow",
+        ),
+    ),
+)
 def test_worst_only_clobber(statuses, expected_message):
     clb = WorstOnly().message(statuses)
     assert clb == expected_message
 
 
-@pytest.mark.parametrize("statuses, expected_message", (
-        ((Status('foo', 1)._set('active', 'argh'),
-          Status('bar', 2)._set('active'),
-          Status('baz', 3)._set('active')),
-         ''),
-        ((Status('foo', 1)._set('active'),
-          Status('bar', 2)._set('blocked', 'wof'),
-          Status('baz', 3)._set('active')),
-         '1 blocked; 2 active'),
-        ((Status('foo', 1)._set('active'),
-          Status('bar', 2)._set('waiting'),
-          Status('baz', 3)._set('blocked', 'meow')),
-         '1 blocked; 1 waiting; 1 active'),
-))
+@pytest.mark.parametrize(
+    "statuses, expected_message",
+    (
+        (
+            (
+                Status("foo", 1)._set("active", "argh"),
+                Status("bar", 2)._set("active"),
+                Status("baz", 3)._set("active"),
+            ),
+            "",
+        ),
+        (
+            (
+                Status("foo", 1)._set("active"),
+                Status("bar", 2)._set("blocked", "wof"),
+                Status("baz", 3)._set("active"),
+            ),
+            "1 blocked; 2 active",
+        ),
+        (
+            (
+                Status("foo", 1)._set("active"),
+                Status("bar", 2)._set("waiting"),
+                Status("baz", 3)._set("blocked", "meow"),
+            ),
+            "1 blocked; 1 waiting; 1 active",
+        ),
+    ),
+)
 def test_condensed_clobber(statuses, expected_message):
     clb = Condensed().message(statuses)
     assert clb == expected_message
 
 
-@pytest.mark.parametrize("statuses, expected_message", (
-        ((Status('foo', 1)._set('active', 'argh'),
-          Status('bar', 2)._set('active'),
-          Status('baz', 3)._set('active')),
-         '(foo:active) argh; (bar:active) ; (baz:active) '),
-        ((Status('foo', 1)._set('active'),
-          Status('bar', 2)._set('blocked', 'wof'),
-          Status('baz', 3)._set('active')),
-         '(bar:blocked) wof; (foo:active) ; (baz:active) '),
-        ((Status('foo', 1)._set('active'),
-          Status('bar', 2)._set('waiting'),
-          Status('baz', 3)._set('blocked', 'meow')),
-         '(baz:blocked) meow; (bar:waiting) ; (foo:active) '),
-))
+@pytest.mark.parametrize(
+    "statuses, expected_message",
+    (
+        (
+            (
+                Status("foo", 1)._set("active", "argh"),
+                Status("bar", 2)._set("active"),
+                Status("baz", 3)._set("active"),
+            ),
+            "(foo:active) argh; (bar:active) ; (baz:active) ",
+        ),
+        (
+            (
+                Status("foo", 1)._set("active"),
+                Status("bar", 2)._set("blocked", "wof"),
+                Status("baz", 3)._set("active"),
+            ),
+            "(bar:blocked) wof; (foo:active) ; (baz:active) ",
+        ),
+        (
+            (
+                Status("foo", 1)._set("active"),
+                Status("bar", 2)._set("waiting"),
+                Status("baz", 3)._set("blocked", "meow"),
+            ),
+            "(baz:blocked) meow; (bar:waiting) ; (foo:active) ",
+        ),
+    ),
+)
 def test_summary_clobber(statuses, expected_message):
     clb = Summary().message(statuses)
     assert clb == expected_message
 
 
-@pytest.mark.parametrize("statuses, expected_order", (
-        ((Status('foo', 1)._set('active'),
-          Status('bar', 2)._set('active'),
-          Status('baz', 3)._set('active')),
-         ('foo', 'bar', 'baz')),
-        ((Status('foo', 1)._set('active'),
-          Status('bar', 2)._set('blocked'),
-          Status('baz', 3)._set('active')),
-         ('bar', 'foo', 'baz')),
-        ((Status('foo', 1)._set('active'),
-          Status('bar', 2)._set('waiting'),
-          Status('baz', 3)._set('blocked')),
-         ('baz', 'bar', 'foo')),
-))
+@pytest.mark.parametrize(
+    "statuses, expected_order",
+    (
+        (
+            (
+                Status("foo", 1)._set("active"),
+                Status("bar", 2)._set("active"),
+                Status("baz", 3)._set("active"),
+            ),
+            ("foo", "bar", "baz"),
+        ),
+        (
+            (
+                Status("foo", 1)._set("active"),
+                Status("bar", 2)._set("blocked"),
+                Status("baz", 3)._set("active"),
+            ),
+            ("bar", "foo", "baz"),
+        ),
+        (
+            (
+                Status("foo", 1)._set("active"),
+                Status("bar", 2)._set("waiting"),
+                Status("baz", 3)._set("blocked"),
+            ),
+            ("baz", "bar", "foo"),
+        ),
+    ),
+)
 def test_status_sorting(statuses, expected_order):
     ordered = Status.sort(statuses)
     assert tuple(status.tag for status in ordered) == expected_order
@@ -190,9 +260,10 @@ def test_status_priority_manual(charm):
         charm.status.workload,
     ]
 
+
 def test_hold(charm):
-    assert charm.unit.status.name == 'unknown'
-    assert charm.unit.status.message == ''
+    assert charm.unit.status.name == "unknown"
+    assert charm.unit.status.message == ""
 
     charm.status.relation_1 = ActiveStatus("foo")
     status = charm.status.commit()
@@ -230,8 +301,8 @@ def test_hold_no_sync(charm):
     status = charm.status.coalesce()
 
     # desync
-    assert status.name == 'waiting'
-    assert status.message == '(rel2) bar'
+    assert status.name == "waiting"
+    assert status.message == "(rel2) bar"
     assert charm.unit.status.name == "active"
     assert charm.unit.status.message == "(relation_1) foo"
 
@@ -266,8 +337,9 @@ def test_stored(charm):
     charm.framework.commit()
 
     other_harness = Harness(type(charm))
-    carry_over_stored(charm.framework, other_harness.framework,
-                      charm.status, 'StoredStateData', '_state')
+    carry_over_stored(
+        charm.framework, other_harness.framework, charm.status, "StoredStateData", "_state"
+    )
 
     other_harness.begin()
 
@@ -275,9 +347,11 @@ def test_stored(charm):
     statuses = json.loads(other_charm.status._state.statuses)
 
     assert statuses
-    assert statuses['relation_1'] == \
-           charm.status.relation_1._snapshot() == \
-           other_charm.status.relation_1._snapshot()
+    assert (
+        statuses["relation_1"]
+        == charm.status.relation_1._snapshot()
+        == other_charm.status.relation_1._snapshot()
+    )
 
     status = other_charm.status.coalesce()
     assert status.name == "blocked"
@@ -358,21 +432,21 @@ def test_dynamic_pool():
     h.begin()
 
     pool = h.charm.status
-    pool.add_status(Status(tag='foo')._set('active', 'foo'))
-    pool.add_status(Status(tag='bar')._set('active', 'bar'))
-    assert pool.foo.status == 'active'
-    assert pool.foo.message == 'foo'
-    assert pool.bar.status == 'active'
-    assert pool.bar.message == 'bar'
+    pool.add_status(Status(tag="foo")._set("active", "foo"))
+    pool.add_status(Status(tag="bar")._set("active", "bar"))
+    assert pool.foo.status == "active"
+    assert pool.foo.message == "foo"
+    assert pool.bar.status == "active"
+    assert pool.bar.message == "bar"
 
     statuses = pool._statuses
     assert len(statuses) == 2
-    pool.add_status(Status(tag='woo')._set('blocked', 'meow'))
+    pool.add_status(Status(tag="woo")._set("blocked", "meow"))
     assert len(statuses) == 3
 
     # this will work
-    woo = Status(tag='woo')
-    pool.add_status(woo, attr='wooz')
+    woo = Status(tag="woo")
+    pool.add_status(woo, attr="wooz")
     assert len(statuses) == 4
     pool.remove_status(woo)
     assert len(statuses) == 3
@@ -395,19 +469,19 @@ def test_dynamic_pool_persistence():
     h.begin()
 
     pool = h.charm.status
-    foo = Status(tag='foo')._set('active', 'foo')
+    foo = Status(tag="foo")._set("active", "foo")
     pool.add_status(foo)
     pool.commit()
 
     h2 = Harness(MyCharm)
-    carry_over_stored(h.framework, h2.framework, pool, 'StoredStateData', '_state')
+    carry_over_stored(h.framework, h2.framework, pool, "StoredStateData", "_state")
     h2.begin()
     assert h2.charm.status.foo == foo
 
     # and now without copying over the storage
     h3 = Harness(MyCharm)
     h3.begin()
-    assert not hasattr(h3.charm.status, 'foo')
+    assert not hasattr(h3.charm.status, "foo")
 
 
 def test_recursive_pool():
@@ -430,8 +504,8 @@ def test_recursive_pool():
 
             relation_status = RelationStatus(self, facade=Summary())
 
-            for relation in self.model.relations['relation_1']:
-                tag = relation.app.name.replace('-', '_')
+            for relation in self.model.relations["relation_1"]:
+                tag = relation.app.name.replace("-", "_")
                 relation_status.add_status(Status(tag))
 
             for key, value in statuses.items():
@@ -439,30 +513,30 @@ def test_recursive_pool():
 
             self.status.relation_1 = relation_status.coalesce()
 
-    h = Harness(MyCharm, meta=yaml.safe_dump(
-        {"requires": {"relation_1": {"interface": "foo"}}}))
+    h = Harness(MyCharm, meta=yaml.safe_dump({"requires": {"relation_1": {"interface": "foo"}}}))
     h.begin()
     charm = h.charm
 
     r1_id = h.add_relation("relation_1", "remote_app_1")
-    h.add_relation_unit(r1_id, 'remote_app_1/0')
+    h.add_relation_unit(r1_id, "remote_app_1/0")
     r2_id = h.add_relation("relation_1", "remote_app_2")
-    h.add_relation_unit(r2_id, 'remote_app_2/0')
+    h.add_relation_unit(r2_id, "remote_app_2/0")
     r3_id = h.add_relation("relation_1", "remote_app_3")
-    h.add_relation_unit(r3_id, 'remote_app_3/0')
+    h.add_relation_unit(r3_id, "remote_app_3/0")
 
     charm.update_relation_1_status(
         {
             "remote_app_1": ActiveStatus("this relation is OK"),
             "remote_app_2": WaitingStatus("this relation is waiting"),
-            "remote_app_3": BlockedStatus("this relation is BORK")
+            "remote_app_3": BlockedStatus("this relation is BORK"),
         }
     )
 
     charm.status.commit()
-    assert charm.unit.status.name == 'blocked'
-    assert charm.unit.status.message == \
-           '(relation_1:blocked) ' \
-           '(remote_app_3:blocked) this relation is BORK; ' \
-           '(remote_app_2:waiting) this relation is waiting; ' \
-           '(remote_app_1:active) this relation is OK'
+    assert charm.unit.status.name == "blocked"
+    assert (
+        charm.unit.status.message == "(relation_1:blocked) "
+        "(remote_app_3:blocked) this relation is BORK; "
+        "(remote_app_2:waiting) this relation is waiting; "
+        "(remote_app_1:active) this relation is OK"
+    )

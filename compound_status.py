@@ -33,7 +33,7 @@ class Status:
     _ID = 0
 
     def __repr__(self):
-        return "<Status {} ({}): {}>".format(self._status, self.tag, self._message)
+        return "<Status {} ({}): {}>".format(self.name, self.tag, self.message)
 
     def __init__(self, tag: Optional[str] = None, priority: float = 0):
         # to keep track of instantiation order
@@ -116,12 +116,12 @@ class Status:
         self._status = "unknown"
         self._message = ""
 
-    def __get__(self, instance, owner):
-        return self
+    # def __get__(self, instance, owner):
+    #    return self
 
-    def __set__(self, instance, value: StatusBase):
-        assert value.name in STATUSES, f"{value} has an invalid name: {value.name}"
-        self._set(value.name, value.message)
+    # def __set__(self, instance, value: StatusBase):
+    #    assert value.name in STATUSES, f"{value} has an invalid name: {value.name}"
+    #    self._set(value.name, value.message)
 
     @property
     def status(self) -> StatusName:
@@ -137,6 +137,10 @@ class Status:
     def message(self) -> str:
         """Return the message associated with this status."""
         return self._message
+
+    @message.setter
+    def message(self, message: str) -> None:
+        self._message = message
 
     def _snapshot(self) -> _StatusDict:
         """Serialize Status for storage."""
@@ -177,10 +181,12 @@ class Status:
         self._attr = attr
 
     def __hash__(self):
-        return hash((self.tag, self.status, self.message))
+        return hash((self.name, self.message))
 
-    def __eq__(self, other: "Status") -> bool:
-        return hash(self) == hash(other)
+    def __eq__(self, other: object) -> bool:
+        # if not isinstance(other, type(self)):
+        #    return False
+        return self.name == other.name and self.message == other.message
 
 
 class Facade:
@@ -190,9 +196,7 @@ class Facade:
         """Return worst status."""
         return Status.sort(statuses)[0]
 
-    def status(
-        self, statuses: Iterable[Status], skip_unknown: bool = False
-    ) -> StatusName:
+    def status(self, statuses: Iterable[Status], skip_unknown: bool = False) -> StatusName:
         """Status Name resulting from this facade."""
         return self.worst(statuses).status
 
@@ -200,13 +204,9 @@ class Facade:
         """Clobber the status messages."""
         raise NotImplementedError
 
-    def coalesce(
-        self, statuses: Iterable[Status], skip_unknown: bool = False
-    ) -> StatusBase:
+    def coalesce(self, statuses: Iterable[Status], skip_unknown: bool = False) -> StatusBase:
         """Coalesce a group of Statuses into a single StatusBase instance."""
-        return StatusBase.from_name(
-            self.status(statuses), self.message(statuses, skip_unknown)
-        )
+        return StatusBase.from_name(self.status(statuses), self.message(statuses, skip_unknown))
 
 
 class WorstOnly(Facade):
@@ -435,13 +435,16 @@ class StatusPool(Object):
                     f"which is an invalid status name. `value` should "
                     f"be an instance of a StatusBase subclass."
                 )
+            StatusType = type(f"Poolable{type(value).__name__}", (Status, type(value)), {})
+            status = StatusType()
+            status.message = value.message
+            status.key = key
+            status._status = value.name
             if key in self._statuses:
-                self._statuses[key]._set(name, value.message)  # noqa
-            else:
-                status = Status(key)
-                self._add_status(status, key)
-                status._set(name, value.message)  # noqa
-            return
+                status.tag = self._statuses[key].tag  # preserve tag
+            self._add_status(status, key)
+            self.__dict__[key] = status
+            return super().__setattr__(key, status)
         return super().__setattr__(key, value)
 
     def _on_framework_commit(self, _event):
@@ -470,6 +473,4 @@ class StatusPool(Object):
     def __repr__(self):
         if not self._statuses:
             return "<StatusPool -- empty>"
-        if self.status == "unknown":
-            return "unknown"
         return str(self.coalesce())
